@@ -1,9 +1,9 @@
 replicaCount: 1
 
 image:
-  repository: zpk.idc.w7.com/we7team/zpk-market
+  repository: zpk.w7.cc/public/w7panel-app-proxy
   pullPolicy: IfNotPresent
-  tag: latest
+  tag: v1.0.0
 
 imagePullSecrets: []
 nameOverride: ""
@@ -37,6 +37,7 @@ env:
   SERVER_PORT: "8000"
   PANEL_CREDENTIAL_CACHE_SECONDS: "300"
   API_PROXY_SCHEME: https
+  API_PROXY_ALLOWED_HOST: api.w7.cc
 
 extraEnv: []
 

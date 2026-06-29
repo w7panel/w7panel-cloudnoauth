@@ -24,3 +24,4 @@ panel:
   credential_cache_seconds: ${PANEL_CREDENTIAL_CACHE_SECONDS-300}
 proxy:
   scheme: ${API_PROXY_SCHEME-https}
+  allowed_host: ${API_PROXY_ALLOWED_HOST-api.w7.cc}

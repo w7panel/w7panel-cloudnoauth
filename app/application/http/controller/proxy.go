@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -18,16 +17,17 @@ import (
 	"github.com/we7coreteam/w7-rangine-go/v2/src/http/controller"
 )
 
-const allowedProxyHost = "api.w7.cc"
+const defaultAllowedProxyHost = "api.w7.cc"
 
 type Proxy struct {
 	controller.Abstract
 	CredentialLogic *logic.Credential
 	Scheme          string
+	AllowedHosts    []string
 	reverseProxy    *httputil.ReverseProxy
 }
 
-func NewProxy(credentialLogic *logic.Credential, scheme string) Proxy {
+func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost string) Proxy {
 	if strings.TrimSpace(scheme) == "" {
 		scheme = "https"
 	}
@@ -44,6 +44,7 @@ func NewProxy(credentialLogic *logic.Credential, scheme string) Proxy {
 	return Proxy{
 		CredentialLogic: credentialLogic,
 		Scheme:          scheme,
+		AllowedHosts:    helper.ParseAllowedHosts(allowedHost, defaultAllowedProxyHost),
 		reverseProxy:    proxy,
 	}
 }
@@ -55,7 +56,7 @@ func (c Proxy) Live(ctx *gin.Context) {
 }
 
 func (c Proxy) Credential(ctx *gin.Context) {
-	remoteIP, err := remoteIPFromRequest(ctx.Request)
+	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
 	if err != nil {
 		c.JsonResponseWithServerError(ctx, err)
 		return
@@ -77,14 +78,14 @@ func (c Proxy) Credential(ctx *gin.Context) {
 }
 
 func (c Proxy) Proxy(ctx *gin.Context) {
-	if !isAllowedProxyHost(ctx.Request.Host) {
+	if !helper.IsAllowedHost(ctx.Request.Host, c.AllowedHosts) {
 		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"message": "host not allowed",
 		})
 		return
 	}
 
-	remoteIP, err := remoteIPFromRequest(ctx.Request)
+	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
 	if err != nil {
 		c.JsonResponseWithServerError(ctx, err)
 		return
@@ -210,30 +211,4 @@ func resetRawRequestBody(req *http.Request, body []byte) {
 
 func isSkippableCredentialError(err error) bool {
 	return k8s.IsSkippableCredentialError(err)
-}
-
-func remoteIPFromRequest(req *http.Request) (string, error) {
-	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		if net.ParseIP(req.RemoteAddr) != nil {
-			return req.RemoteAddr, nil
-		}
-		return "", fmt.Errorf("invalid remote address %q: %w", req.RemoteAddr, err)
-	}
-	if net.ParseIP(host) == nil {
-		return "", fmt.Errorf("invalid remote ip %q", host)
-	}
-	return host, nil
-}
-
-func isAllowedProxyHost(host string) bool {
-	if strings.EqualFold(host, allowedProxyHost) {
-		return true
-	}
-
-	hostWithoutPort, _, err := net.SplitHostPort(host)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(hostWithoutPort, allowedProxyHost)
 }

@@ -38,6 +38,7 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	proxyController := controller.NewProxy(
 		credentialLogic,
 		config.GetString("proxy.scheme"),
+		config.GetString("proxy.allowed_host"),
 	)
 
 	httpServer.RegisterRouters(func(engine *gin.Engine) {

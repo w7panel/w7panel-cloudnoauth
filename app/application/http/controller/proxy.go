@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"github.com/w7panel/w7panel-appid-proxy/common/service/k8s"
 	"github.com/we7coreteam/w7-rangine-go/v2/src/http/controller"
 )
+
+const allowedProxyHost = "api.w7.cc"
 
 type Proxy struct {
 	controller.Abstract
@@ -52,9 +55,15 @@ func (c Proxy) Live(ctx *gin.Context) {
 }
 
 func (c Proxy) Credential(ctx *gin.Context) {
+	remoteIP, err := remoteIPFromRequest(ctx.Request)
+	if err != nil {
+		c.JsonResponseWithServerError(ctx, err)
+		return
+	}
+
 	credential, err := c.CredentialLogic.ResolveByRemoteIP(
 		ctx.Request.Context(),
-		ctx.ClientIP(),
+		remoteIP,
 	)
 	if err != nil {
 		c.JsonResponseWithServerError(ctx, err)
@@ -68,10 +77,23 @@ func (c Proxy) Credential(ctx *gin.Context) {
 }
 
 func (c Proxy) Proxy(ctx *gin.Context) {
+	if !isAllowedProxyHost(ctx.Request.Host) {
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"message": "host not allowed",
+		})
+		return
+	}
+
+	remoteIP, err := remoteIPFromRequest(ctx.Request)
+	if err != nil {
+		c.JsonResponseWithServerError(ctx, err)
+		return
+	}
+
 	if err := appendSignedBody(ctx.Request, func() (k8s.AppCredential, error) {
 		return c.CredentialLogic.ResolveByRemoteIP(
 			ctx.Request.Context(),
-			ctx.ClientIP(),
+			remoteIP,
 		)
 	}); err != nil {
 		c.JsonResponseWithServerError(ctx, err)
@@ -188,4 +210,30 @@ func resetRawRequestBody(req *http.Request, body []byte) {
 
 func isSkippableCredentialError(err error) bool {
 	return k8s.IsSkippableCredentialError(err)
+}
+
+func remoteIPFromRequest(req *http.Request) (string, error) {
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		if net.ParseIP(req.RemoteAddr) != nil {
+			return req.RemoteAddr, nil
+		}
+		return "", fmt.Errorf("invalid remote address %q: %w", req.RemoteAddr, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("invalid remote ip %q", host)
+	}
+	return host, nil
+}
+
+func isAllowedProxyHost(host string) bool {
+	if strings.EqualFold(host, allowedProxyHost) {
+		return true
+	}
+
+	hostWithoutPort, _, err := net.SplitHostPort(host)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(hostWithoutPort, allowedProxyHost)
 }

@@ -1,4 +1,4 @@
-HELM_CHART_DIR := charts/w7panel-appid-proxy
+HELM_CHART_DIR := charts
 HELM_VALUES_FILE := $(HELM_CHART_DIR)/values.yaml
 HELM_CHART_FILE := $(HELM_CHART_DIR)/Chart.yaml
 HELM_PACKAGE_DIR ?= charts

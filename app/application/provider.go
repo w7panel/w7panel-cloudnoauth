@@ -43,7 +43,7 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	httpServer.RegisterRouters(func(engine *gin.Engine) {
 		api := engine.Group("/api")
 		api.GET("/live", proxyController.Live)
-		api.GET("/credential", proxyController.Credential)
+		api.GET("/app/info", proxyController.Credential)
 
 		engine.NoRoute(proxyController.Proxy)
 	})

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,10 +56,17 @@ type k8sList[T any] struct {
 }
 
 type k8sObjectMeta struct {
-	Name        string            `json:"name"`
-	Namespace   string            `json:"namespace"`
-	Labels      map[string]string `json:"labels"`
-	Annotations map[string]string `json:"annotations"`
+	Name            string              `json:"name"`
+	Namespace       string              `json:"namespace"`
+	Labels          map[string]string   `json:"labels"`
+	Annotations     map[string]string   `json:"annotations"`
+	OwnerReferences []k8sOwnerReference `json:"ownerReferences"`
+}
+
+type k8sOwnerReference struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
 }
 
 type k8sPod struct {
@@ -69,6 +77,14 @@ type k8sPod struct {
 }
 
 type appGroup struct {
+	Metadata k8sObjectMeta `json:"metadata"`
+}
+
+type k8sReplicaSet struct {
+	Metadata k8sObjectMeta `json:"metadata"`
+}
+
+type k8sDeployment struct {
 	Metadata k8sObjectMeta `json:"metadata"`
 }
 
@@ -100,26 +116,66 @@ func makeK8sConfig(k8sConfig string) (*rest.Config, error) {
 }
 
 func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string, remoteIP string) (AppCredential, error) {
+	namespace = resolveNamespace(namespace)
+	slog.Info("k8s resolve app credential started",
+		"namespace", namespace,
+		"remote_ip", remoteIP,
+	)
+
 	pod, err := s.QueryPodByIP(ctx, namespace, remoteIP)
 	if err != nil {
+		slog.Warn("k8s resolve pod by remote ip failed",
+			"namespace", namespace,
+			"remote_ip", remoteIP,
+			"error", err,
+		)
 		return AppCredential{}, err
 	}
 
-	parentName, err := resolveAppGroupParentName(pod)
+	parentName, err := s.ResolveAppGroupParentName(ctx, namespace, pod)
 	if err != nil {
+		slog.Warn("k8s resolve appgroup parent failed",
+			"namespace", namespace,
+			"remote_ip", remoteIP,
+			"pod", pod.Metadata.Name,
+			"error", err,
+		)
 		return AppCredential{}, err
 	}
 
 	group, err := s.QueryAppGroupByParent(ctx, namespace, parentName)
 	if err != nil {
+		slog.Warn("k8s resolve appgroup by parent failed",
+			"namespace", namespace,
+			"remote_ip", remoteIP,
+			"pod", pod.Metadata.Name,
+			"parent", parentName,
+			"error", err,
+		)
 		return AppCredential{}, err
 	}
 
 	appID := firstAnnotation(group.Metadata.Annotations, []string{"w7.cc/appid", "w7.cc/app-id", "appid", "app_id"})
 	appSecret := firstAnnotation(group.Metadata.Annotations, []string{"w7.cc/appsecret", "w7.cc/app-secret", "appsecret", "app_secret"})
 	if appID == "" || appSecret == "" {
+		slog.Warn("k8s app credential annotation missing",
+			"namespace", namespace,
+			"remote_ip", remoteIP,
+			"pod", pod.Metadata.Name,
+			"appgroup", group.Metadata.Name,
+			"has_appid", appID != "",
+			"has_appsecret", appSecret != "",
+		)
 		return AppCredential{}, fmt.Errorf("%w: appid or appsecret annotation not found in appgroup %s", ErrAppCredentialNotFound, group.Metadata.Name)
 	}
+
+	slog.Info("k8s resolve app credential succeeded",
+		"namespace", namespace,
+		"remote_ip", remoteIP,
+		"pod", pod.Metadata.Name,
+		"appgroup", group.Metadata.Name,
+		"appid", appID,
+	)
 
 	return AppCredential{
 		RemoteIP:  remoteIP,
@@ -130,12 +186,139 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 	}, nil
 }
 
+func (s *K8sService) ResolveAppGroupParentName(ctx context.Context, namespace string, pod k8sPod) (string, error) {
+	if parentName := resolveAppGroupParentNameFromMetadata(pod.Metadata); parentName != "" {
+		slog.Info("k8s appgroup parent resolved from pod metadata",
+			"namespace", namespace,
+			"pod", pod.Metadata.Name,
+			"parent", parentName,
+		)
+		return parentName, nil
+	}
+
+	deployment, err := s.QueryDeploymentByPod(ctx, namespace, pod)
+	if err != nil {
+		return "", err
+	}
+	if parentName := resolveAppGroupParentNameFromMetadata(deployment.Metadata); parentName != "" {
+		slog.Info("k8s appgroup parent resolved from deployment metadata",
+			"namespace", namespace,
+			"pod", pod.Metadata.Name,
+			"deployment", deployment.Metadata.Name,
+			"parent", parentName,
+		)
+		return parentName, nil
+	}
+
+	return "", fmt.Errorf("%w: appgroup parent annotation not found in deployment %s for pod %s", ErrAppGroupParentNotFound, deployment.Metadata.Name, pod.Metadata.Name)
+}
+
+func (s *K8sService) QueryDeploymentByPod(ctx context.Context, namespace string, pod k8sPod) (k8sDeployment, error) {
+	replicaSetName := ownerReferenceName(pod.Metadata.OwnerReferences, "ReplicaSet")
+	if replicaSetName == "" {
+		return k8sDeployment{}, fmt.Errorf("%w: replicaset owner not found in pod %s", ErrAppGroupParentNotFound, pod.Metadata.Name)
+	}
+
+	replicaSet, err := s.QueryReplicaSet(ctx, namespace, replicaSetName)
+	if err != nil {
+		return k8sDeployment{}, err
+	}
+
+	deploymentName := ownerReferenceName(replicaSet.Metadata.OwnerReferences, "Deployment")
+	if deploymentName == "" {
+		return k8sDeployment{}, fmt.Errorf("%w: deployment owner not found in replicaset %s", ErrAppGroupParentNotFound, replicaSet.Metadata.Name)
+	}
+
+	return s.QueryDeployment(ctx, namespace, deploymentName)
+}
+
+func (s *K8sService) QueryReplicaSet(ctx context.Context, namespace string, name string) (k8sReplicaSet, error) {
+	namespace = resolveNamespace(namespace)
+	slog.Debug("k8s query replicaset by name",
+		"namespace", namespace,
+		"replicaset", name,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
+		"%s/apis/apps/v1/namespaces/%s/replicasets/%s",
+		s.baseURL(),
+		url.PathEscape(namespace),
+		url.PathEscape(name),
+	), nil)
+	if err != nil {
+		return k8sReplicaSet{}, err
+	}
+
+	resp, err := s.doPanelReq(req)
+	if err != nil {
+		return k8sReplicaSet{}, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return k8sReplicaSet{}, err
+	}
+
+	replicaSet := &k8sReplicaSet{}
+	if err = json.Unmarshal(respBody, replicaSet); err != nil {
+		return k8sReplicaSet{}, err
+	}
+	if replicaSet.Metadata.Name == "" {
+		return k8sReplicaSet{}, fmt.Errorf("replicaset not found by name %s", name)
+	}
+
+	return *replicaSet, nil
+}
+
+func (s *K8sService) QueryDeployment(ctx context.Context, namespace string, name string) (k8sDeployment, error) {
+	namespace = resolveNamespace(namespace)
+	slog.Debug("k8s query deployment by name",
+		"namespace", namespace,
+		"deployment", name,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
+		"%s/apis/apps/v1/namespaces/%s/deployments/%s",
+		s.baseURL(),
+		url.PathEscape(namespace),
+		url.PathEscape(name),
+	), nil)
+	if err != nil {
+		return k8sDeployment{}, err
+	}
+
+	resp, err := s.doPanelReq(req)
+	if err != nil {
+		return k8sDeployment{}, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return k8sDeployment{}, err
+	}
+
+	deployment := &k8sDeployment{}
+	if err = json.Unmarshal(respBody, deployment); err != nil {
+		return k8sDeployment{}, err
+	}
+	if deployment.Metadata.Name == "" {
+		return k8sDeployment{}, fmt.Errorf("deployment not found by name %s", name)
+	}
+
+	return *deployment, nil
+}
+
 func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteIP string) (k8sPod, error) {
+	namespace = resolveNamespace(namespace)
 	var pods k8sList[k8sPod]
+	slog.Debug("k8s query pod by ip",
+		"namespace", namespace,
+		"remote_ip", remoteIP,
+	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
 		"%s/api/v1/namespaces/%s/pods?fieldSelector=%s",
 		s.baseURL(),
-		url.PathEscape(resolveNamespace(namespace)),
+		url.PathEscape(namespace),
 		url.QueryEscape("status.podIP="+remoteIP),
 	), nil)
 	if err != nil {
@@ -158,6 +341,11 @@ func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteI
 
 	for _, pod := range pods.Items {
 		if pod.Status.PodIP == remoteIP {
+			slog.Info("k8s pod matched by ip",
+				"namespace", namespace,
+				"remote_ip", remoteIP,
+				"pod", pod.Metadata.Name,
+			)
 			return pod, nil
 		}
 	}
@@ -166,11 +354,16 @@ func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteI
 }
 
 func (s *K8sService) QueryAppGroupByParent(ctx context.Context, namespace string, parentName string) (appGroup, error) {
+	namespace = resolveNamespace(namespace)
 	labelSelector := fmt.Sprintf("w7.cc/parent=%s", parentName)
+	slog.Debug("k8s query appgroup by parent",
+		"namespace", namespace,
+		"parent", parentName,
+	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
 		"%s/apis/w7panel.w7.com/v1alpha1/namespaces/%s/appgroups?labelSelector=%s",
 		s.baseURL(),
-		url.PathEscape(resolveNamespace(namespace)),
+		url.PathEscape(namespace),
 		url.QueryEscape(labelSelector),
 	), nil)
 	if err != nil {
@@ -193,6 +386,12 @@ func (s *K8sService) QueryAppGroupByParent(ctx context.Context, namespace string
 		return appGroup{}, err
 	}
 	if len(groups.Items) > 0 {
+		slog.Info("k8s appgroup matched by parent",
+			"namespace", namespace,
+			"parent", parentName,
+			"appgroup", groups.Items[0].Metadata.Name,
+			"count", len(groups.Items),
+		)
 		return groups.Items[0], nil
 	}
 
@@ -200,10 +399,15 @@ func (s *K8sService) QueryAppGroupByParent(ctx context.Context, namespace string
 }
 
 func (s *K8sService) QueryAppGroup(ctx context.Context, namespace string, name string) (appGroup, error) {
+	namespace = resolveNamespace(namespace)
+	slog.Debug("k8s query appgroup by name",
+		"namespace", namespace,
+		"appgroup", name,
+	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
 		"%s/apis/w7panel.w7.com/v1alpha1/namespaces/%s/appgroups/%s",
 		s.baseURL(),
-		url.PathEscape(resolveNamespace(namespace)),
+		url.PathEscape(namespace),
 		url.PathEscape(name),
 	), nil)
 	if err != nil {
@@ -236,17 +440,41 @@ func (s *K8sService) doPanelReq(req *http.Request) (*http.Response, error) {
 	if s.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.Token)
 	}
+	startedAt := time.Now()
+	slog.Debug("k8s http request started",
+		"method", req.Method,
+		"url", req.URL.String(),
+	)
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
+		slog.Warn("k8s http request failed",
+			"method", req.Method,
+			"url", req.URL.String(),
+			"duration", time.Since(startedAt),
+			"error", err,
+		)
 		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		slog.Warn("k8s http request returned non-success",
+			"method", req.Method,
+			"url", req.URL.String(),
+			"status", resp.StatusCode,
+			"duration", time.Since(startedAt),
+			"response", string(respBody),
+		)
 		return nil, fmt.Errorf("failed to request panel, status: %d, response: %s", resp.StatusCode, string(respBody))
 	}
 
+	slog.Debug("k8s http request succeeded",
+		"method", req.Method,
+		"url", req.URL.String(),
+		"status", resp.StatusCode,
+		"duration", time.Since(startedAt),
+	)
 	return resp, nil
 }
 
@@ -271,14 +499,22 @@ func resolveNamespace(namespace string) string {
 	return "default"
 }
 
-func resolveAppGroupParentName(pod k8sPod) (string, error) {
+func resolveAppGroupParentNameFromMetadata(metadata k8sObjectMeta) string {
 	for _, key := range []string{"w7.cc/group-name", "w7.cc/name", "app.kubernetes.io/instance", "app"} {
-		if value := pod.Metadata.Labels[key]; value != "" {
-			return value, nil
+		if value := metadata.Annotations[key]; value != "" {
+			return value
 		}
 	}
+	return ""
+}
 
-	return "", fmt.Errorf("%w: appgroup parent label not found in pod %s", ErrAppGroupParentNotFound, pod.Metadata.Name)
+func ownerReferenceName(ownerReferences []k8sOwnerReference, kind string) string {
+	for _, ownerReference := range ownerReferences {
+		if strings.EqualFold(ownerReference.Kind, kind) && ownerReference.Name != "" {
+			return ownerReference.Name
+		}
+	}
+	return ""
 }
 
 func firstAnnotation(annotations map[string]string, keys []string) string {

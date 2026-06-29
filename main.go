@@ -10,7 +10,6 @@ import (
 	"github.com/we7coreteam/w7-rangine-go/v2/src/core/helper"
 	ranginehttp "github.com/we7coreteam/w7-rangine-go/v2/src/http"
 	ranginemiddleware "github.com/we7coreteam/w7-rangine-go/v2/src/http/middleware"
-	"github.com/we7coreteam/w7-rangine-go/v2/src/http/session"
 )
 
 //go:embed config.yaml
@@ -31,7 +30,6 @@ func main() {
 	httpServer := new(ranginehttp.Provider).Register(app.GetConfig(), app.GetConsole(), app.GetServerManager()).Export()
 	// 注册一些全局中间件，路由或是其它一些全局操作
 	httpServer.Use(ranginemiddleware.GetPanicHandlerMiddleware())
-	httpServer.Use(ranginemiddleware.GetSessionMiddleware(app.GetConfig(), session.GetGormStore, []byte("secret")))
 
 	// 注册业务 provider，此模块中需要使用 http server 和 console
 	new(application.Provider).Register(httpServer)

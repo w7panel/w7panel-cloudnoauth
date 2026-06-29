@@ -2,9 +2,11 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -18,6 +20,8 @@ import (
 )
 
 const defaultAllowedProxyHost = "api.w7.cc"
+
+type proxyStartTimeContextKey struct{}
 
 type Proxy struct {
 	controller.Abstract
@@ -40,6 +44,32 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 		req.Header.Set("X-Forwarded-Host", originalHost)
 		req.Header.Set("X-Appid-Proxy", "w7panel-appid-proxy")
 	}
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		args := []any{
+			"method", resp.Request.Method,
+			"url", resp.Request.URL.String(),
+			"status", resp.StatusCode,
+			"host", resp.Request.Host,
+		}
+		if startedAt, ok := resp.Request.Context().Value(proxyStartTimeContextKey{}).(time.Time); ok {
+			args = append(args, "duration", time.Since(startedAt))
+		}
+		slog.Info("proxy upstream response", args...)
+		return nil
+	}
+	proxy.ErrorHandler = func(writer http.ResponseWriter, req *http.Request, err error) {
+		args := []any{
+			"method", req.Method,
+			"url", req.URL.String(),
+			"host", req.Host,
+			"error", err,
+		}
+		if startedAt, ok := req.Context().Value(proxyStartTimeContextKey{}).(time.Time); ok {
+			args = append(args, "duration", time.Since(startedAt))
+		}
+		slog.Error("proxy upstream error", args...)
+		http.Error(writer, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+	}
 
 	return Proxy{
 		CredentialLogic: credentialLogic,
@@ -58,18 +88,36 @@ func (c Proxy) Live(ctx *gin.Context) {
 func (c Proxy) Credential(ctx *gin.Context) {
 	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
 	if err != nil {
+		slog.Warn("credential remote ip parse failed",
+			"remote_addr", ctx.Request.RemoteAddr,
+			"error", err,
+		)
 		c.JsonResponseWithServerError(ctx, err)
 		return
 	}
 
+	slog.Info("credential resolve requested",
+		"remote_ip", remoteIP,
+		"path", ctx.Request.URL.Path,
+	)
 	credential, err := c.CredentialLogic.ResolveByRemoteIP(
 		ctx.Request.Context(),
 		remoteIP,
 	)
 	if err != nil {
+		slog.Warn("credential resolve failed",
+			"remote_ip", remoteIP,
+			"error", err,
+		)
 		c.JsonResponseWithServerError(ctx, err)
 		return
 	}
+	slog.Info("credential resolve succeeded",
+		"remote_ip", remoteIP,
+		"pod", credential.PodName,
+		"appgroup", credential.AppGroup,
+		"appid", credential.AppID,
+	)
 
 	c.JsonResponseWithoutError(ctx, gin.H{
 		"appid":     credential.AppID,
@@ -78,7 +126,23 @@ func (c Proxy) Credential(ctx *gin.Context) {
 }
 
 func (c Proxy) Proxy(ctx *gin.Context) {
+	startedAt := time.Now()
+	ctx.Request = ctx.Request.WithContext(context.WithValue(ctx.Request.Context(), proxyStartTimeContextKey{}, startedAt))
+	slog.Info("proxy request received",
+		"method", ctx.Request.Method,
+		"path", ctx.Request.URL.Path,
+		"query", ctx.Request.URL.RawQuery,
+		"host", ctx.Request.Host,
+		"remote_addr", ctx.Request.RemoteAddr,
+		"content_length", ctx.Request.ContentLength,
+		"content_type", ctx.Request.Header.Get("Content-Type"),
+	)
+
 	if !helper.IsAllowedHost(ctx.Request.Host, c.AllowedHosts) {
+		slog.Warn("proxy host rejected",
+			"host", ctx.Request.Host,
+			"allowed_hosts", c.AllowedHosts,
+		)
 		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"message": "host not allowed",
 		})
@@ -87,6 +151,10 @@ func (c Proxy) Proxy(ctx *gin.Context) {
 
 	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
 	if err != nil {
+		slog.Warn("proxy remote ip parse failed",
+			"remote_addr", ctx.Request.RemoteAddr,
+			"error", err,
+		)
 		c.JsonResponseWithServerError(ctx, err)
 		return
 	}
@@ -97,10 +165,22 @@ func (c Proxy) Proxy(ctx *gin.Context) {
 			remoteIP,
 		)
 	}); err != nil {
+		slog.Warn("proxy append signed body failed",
+			"remote_ip", remoteIP,
+			"path", ctx.Request.URL.Path,
+			"error", err,
+		)
 		c.JsonResponseWithServerError(ctx, err)
 		return
 	}
 
+	slog.Info("proxy forwarding request",
+		"remote_ip", remoteIP,
+		"method", ctx.Request.Method,
+		"host", ctx.Request.Host,
+		"path", ctx.Request.URL.Path,
+		"content_length", ctx.Request.ContentLength,
+	)
 	c.reverseProxy.ServeHTTP(ctx.Writer, ctx.Request)
 }
 

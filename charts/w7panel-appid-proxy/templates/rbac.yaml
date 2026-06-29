@@ -1,0 +1,38 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  labels:
+    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - w7panel.w7.com
+    resources:
+      - appgroups
+    verbs:
+      - get
+      - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  labels:
+    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "w7panel-appid-proxy.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "w7panel-appid-proxy.fullname" . }}
+{{- end }}

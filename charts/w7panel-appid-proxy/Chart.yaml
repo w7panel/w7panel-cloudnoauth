@@ -1,0 +1,6 @@
+apiVersion: v2
+name: w7panel-appid-proxy
+description: API proxy for in-cluster unauthenticated requests to api.w7.cc.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

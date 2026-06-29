@@ -1,0 +1,26 @@
+app:
+  name: rangine
+  env: ${APP_ENV-release}
+  server: http
+server:
+  http:
+    host: 0.0.0.0
+    port: ${SERVER_PORT-8000}
+log:
+  default:
+    driver: stack
+    channels:
+      - file
+      - console
+  file:
+    driver: file
+    path: run.log
+    level: info
+  console:
+    driver: console
+    level: debug
+panel:
+  namespace: ${PANEL_NAMESPACE-default}
+  credential_cache_seconds: ${PANEL_CREDENTIAL_CACHE_SECONDS-300}
+proxy:
+  scheme: ${API_PROXY_SCHEME-https}

@@ -8,7 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags "-w -s" -o /out/zpk-market .
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags "-w -s" -o /out/w7panel-app-proxy .
 
 FROM alpine:3.22
 
@@ -20,9 +20,9 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /home
 
-COPY --from=builder /out/zpk-market /home/zpk-market
+COPY --from=builder /out/w7panel-app-proxy /home/w7panel-app-proxy
 COPY config.yaml /home/config.yaml
 
 EXPOSE 8000
 
-CMD ["/home/zpk-market", "server:start", "-f", "/home/config.yaml"]
+CMD ["/home/w7panel-app-proxy", "server:start", "-f", "/home/config.yaml"]

@@ -19,7 +19,7 @@ import (
 var (
 	ErrAppGroupParentNotFound = errors.New("appgroup parent not found")
 	ErrAppGroupNotFound       = errors.New("appgroup not found")
-	ErrAppCredentialNotFound  = errors.New("app credential annotation not found")
+	ErrAppCredentialNotFound  = errors.New("app credential not found")
 )
 
 func IsSkippableCredentialError(err error) bool {
@@ -78,6 +78,12 @@ type k8sPod struct {
 
 type appGroup struct {
 	Metadata k8sObjectMeta `json:"metadata"`
+	Spec     struct {
+		AppCredentials struct {
+			AppID     string `json:"appid"`
+			AppSecret string `json:"appSecret"`
+		} `json:"appCredentials"`
+	} `json:"spec"`
 }
 
 type k8sReplicaSet struct {
@@ -143,20 +149,20 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 		return AppCredential{}, err
 	}
 
-	group, err := s.QueryAppGroupByParent(ctx, namespace, parentName)
+	group, err := s.QueryAppGroup(ctx, namespace, parentName)
 	if err != nil {
-		slog.Warn("k8s resolve appgroup by parent failed",
+		err = fmt.Errorf("%w: parent %s: %v", ErrAppGroupNotFound, parentName, err)
+		slog.Warn("k8s resolve appgroup by name failed",
 			"namespace", namespace,
 			"remote_ip", remoteIP,
 			"pod", pod.Metadata.Name,
-			"parent", parentName,
+			"appgroup", parentName,
 			"error", err,
 		)
 		return AppCredential{}, err
 	}
 
-	appID := firstAnnotation(group.Metadata.Annotations, []string{"w7.cc/appid", "w7.cc/app-id", "appid", "app_id"})
-	appSecret := firstAnnotation(group.Metadata.Annotations, []string{"w7.cc/appsecret", "w7.cc/app-secret", "appsecret", "app_secret"})
+	appID, appSecret := resolveAppCredentialFromAppGroup(group)
 	if appID == "" || appSecret == "" {
 		slog.Warn("k8s app credential annotation missing",
 			"namespace", namespace,
@@ -166,7 +172,7 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 			"has_appid", appID != "",
 			"has_appsecret", appSecret != "",
 		)
-		return AppCredential{}, fmt.Errorf("%w: appid or appsecret annotation not found in appgroup %s", ErrAppCredentialNotFound, group.Metadata.Name)
+		return AppCredential{}, fmt.Errorf("%w: appid or appsecret not found in appgroup %s", ErrAppCredentialNotFound, group.Metadata.Name)
 	}
 
 	slog.Info("k8s resolve app credential succeeded",
@@ -353,51 +359,6 @@ func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteI
 	return k8sPod{}, fmt.Errorf("pod not found by remote ip %s", remoteIP)
 }
 
-func (s *K8sService) QueryAppGroupByParent(ctx context.Context, namespace string, parentName string) (appGroup, error) {
-	namespace = resolveNamespace(namespace)
-	labelSelector := fmt.Sprintf("w7.cc/parent=%s", parentName)
-	slog.Debug("k8s query appgroup by parent",
-		"namespace", namespace,
-		"parent", parentName,
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(
-		"%s/apis/w7panel.w7.com/v1alpha1/namespaces/%s/appgroups?labelSelector=%s",
-		s.baseURL(),
-		url.PathEscape(namespace),
-		url.QueryEscape(labelSelector),
-	), nil)
-	if err != nil {
-		return appGroup{}, err
-	}
-
-	resp, err := s.doPanelReq(req)
-	if err != nil {
-		return appGroup{}, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return appGroup{}, err
-	}
-
-	groups := &k8sList[appGroup]{}
-	if err = json.Unmarshal(respBody, groups); err != nil {
-		return appGroup{}, err
-	}
-	if len(groups.Items) > 0 {
-		slog.Info("k8s appgroup matched by parent",
-			"namespace", namespace,
-			"parent", parentName,
-			"appgroup", groups.Items[0].Metadata.Name,
-			"count", len(groups.Items),
-		)
-		return groups.Items[0], nil
-	}
-
-	return appGroup{}, fmt.Errorf("%w: parent %s", ErrAppGroupNotFound, parentName)
-}
-
 func (s *K8sService) QueryAppGroup(ctx context.Context, namespace string, name string) (appGroup, error) {
 	namespace = resolveNamespace(namespace)
 	slog.Debug("k8s query appgroup by name",
@@ -515,6 +476,16 @@ func ownerReferenceName(ownerReferences []k8sOwnerReference, kind string) string
 		}
 	}
 	return ""
+}
+
+func resolveAppCredentialFromAppGroup(group appGroup) (string, string) {
+	appID := group.Spec.AppCredentials.AppID
+	appSecret := group.Spec.AppCredentials.AppSecret
+	if appID != "" || appSecret != "" {
+		return appID, appSecret
+	}
+
+	return "", ""
 }
 
 func firstAnnotation(annotations map[string]string, keys []string) string {

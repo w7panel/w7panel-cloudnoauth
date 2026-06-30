@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: zpk.w7.cc/public/w7panel-app-proxy
   pullPolicy: IfNotPresent
-  tag: v1.0.8
+  tag: v1.0.9
 
 imagePullSecrets: []
 nameOverride: ""

@@ -1,4 +1,4 @@
-module github.com/w7panel/w7panel-appid-proxy
+module github.com/w7panel/w7panel-cloudnoauth
 
 go 1.25.0
 

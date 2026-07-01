@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	cache "github.com/patrickmn/go-cache"
-	"github.com/w7panel/w7panel-appid-proxy/app/application/http/controller"
-	"github.com/w7panel/w7panel-appid-proxy/app/application/logic"
-	"github.com/w7panel/w7panel-appid-proxy/common/service/k8s"
+	"github.com/w7panel/w7panel-cloudnoauth/app/application/http/controller"
+	"github.com/w7panel/w7panel-cloudnoauth/app/application/logic"
+	"github.com/w7panel/w7panel-cloudnoauth/common/service/k8s"
 	"github.com/we7coreteam/w7-rangine-go/v2/pkg/support/facade"
 	http_server "github.com/we7coreteam/w7-rangine-go/v2/src/http/server"
 )

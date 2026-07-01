@@ -6,7 +6,7 @@ import (
 	"time"
 
 	cache "github.com/patrickmn/go-cache"
-	"github.com/w7panel/w7panel-appid-proxy/common/service/k8s"
+	"github.com/w7panel/w7panel-cloudnoauth/common/service/k8s"
 	"golang.org/x/sync/singleflight"
 )
 

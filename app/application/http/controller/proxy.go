@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/w7panel/w7panel-appid-proxy/app/application/logic"
-	"github.com/w7panel/w7panel-appid-proxy/common/helper"
-	"github.com/w7panel/w7panel-appid-proxy/common/service/k8s"
+	"github.com/w7panel/w7panel-cloudnoauth/app/application/logic"
+	"github.com/w7panel/w7panel-cloudnoauth/common/helper"
+	"github.com/w7panel/w7panel-cloudnoauth/common/service/k8s"
 	"github.com/we7coreteam/w7-rangine-go/v2/src/http/controller"
 )
 

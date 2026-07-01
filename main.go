@@ -5,7 +5,7 @@ import (
 	_ "embed"
 
 	"github.com/spf13/viper"
-	"github.com/w7panel/w7panel-appid-proxy/app/application"
+	"github.com/w7panel/w7panel-cloudnoauth/app/application"
 	app "github.com/we7coreteam/w7-rangine-go/v2/src"
 	"github.com/we7coreteam/w7-rangine-go/v2/src/core/helper"
 	ranginehttp "github.com/we7coreteam/w7-rangine-go/v2/src/http"

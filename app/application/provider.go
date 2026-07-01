@@ -21,19 +21,26 @@ func (provider *Provider) Register(httpServer *http_server.Server) {
 
 func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	config := facade.GetConfig()
-	cacheTTL := time.Duration(config.GetInt("panel.credential_cache_seconds")) * time.Second
-	if cacheTTL <= 0 {
-		cacheTTL = 5 * time.Minute
-	}
-	credentialLogic := &logic.Credential{
-		Namespace: config.GetString("panel.namespace"),
-		Cache:     cache.New(cacheTTL, cacheTTL*2),
-	}
+
 	k8sService, err := k8s.NewK8sService(config.GetString("kubernetes.config"))
 	if err != nil {
 		panic(err)
 	}
-	credentialLogic.K8sService = k8sService
+
+	cacheTTL := time.Duration(config.GetInt("panel.credential_cache_seconds")) * time.Second
+	if cacheTTL <= 0 {
+		cacheTTL = 10 * time.Minute
+	}
+	negativeCacheTTL := time.Duration(config.GetInt("panel.credential_negative_cache_seconds")) * time.Second
+	if negativeCacheTTL <= 0 {
+		negativeCacheTTL = time.Minute
+	}
+	credentialLogic := &logic.Credential{
+		Namespace:        config.GetString("panel.namespace"),
+		Cache:            cache.New(cacheTTL, cacheTTL*2),
+		NegativeCacheTTL: negativeCacheTTL,
+		K8sService:       k8sService,
+	}
 
 	proxyController := controller.NewProxy(
 		credentialLogic,

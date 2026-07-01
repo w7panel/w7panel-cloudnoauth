@@ -21,7 +21,8 @@ log:
     level: debug
 panel:
   namespace: ${PANEL_NAMESPACE-default}
-  credential_cache_seconds: ${PANEL_CREDENTIAL_CACHE_SECONDS-300}
+  credential_cache_seconds: ${PANEL_CREDENTIAL_CACHE_SECONDS-600}
+  credential_negative_cache_seconds: ${PANEL_CREDENTIAL_NEGATIVE_CACHE_SECONDS-60}
 proxy:
   scheme: ${API_PROXY_SCHEME-https}
   allowed_host: ${API_PROXY_ALLOWED_HOST-api.w7.cc}

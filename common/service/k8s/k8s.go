@@ -22,6 +22,12 @@ var (
 	ErrAppCredentialNotFound  = errors.New("app credential not found")
 )
 
+const (
+	k8sMaxIdleConns        = 100
+	k8sMaxIdleConnsPerHost = 50
+	k8sMaxConnsPerHost     = 100
+)
+
 func IsSkippableCredentialError(err error) bool {
 	return errors.Is(err, ErrAppGroupParentNotFound) ||
 		errors.Is(err, ErrAppGroupNotFound) ||
@@ -100,6 +106,14 @@ func NewK8sService(k8sConfig string) (*K8sService, error) {
 		return nil, err
 	}
 	config.Timeout = 10 * time.Second
+	existingWrapTransport := config.WrapTransport
+	config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		rt = tuneK8sTransport(rt)
+		if existingWrapTransport != nil {
+			return existingWrapTransport(rt)
+		}
+		return rt
+	}
 
 	transport, err := rest.TransportFor(config)
 	if err != nil {
@@ -119,6 +133,25 @@ func makeK8sConfig(k8sConfig string) (*rest.Config, error) {
 		return clientcmd.RESTConfigFromKubeConfig([]byte(k8sConfig))
 	}
 	return rest.InClusterConfig()
+}
+
+func tuneK8sTransport(rt http.RoundTripper) http.RoundTripper {
+	transport, ok := rt.(*http.Transport)
+	if !ok {
+		return rt
+	}
+
+	cloned := transport.Clone()
+	if cloned.MaxIdleConns == 0 || cloned.MaxIdleConns < k8sMaxIdleConns {
+		cloned.MaxIdleConns = k8sMaxIdleConns
+	}
+	if cloned.MaxIdleConnsPerHost == 0 || cloned.MaxIdleConnsPerHost < k8sMaxIdleConnsPerHost {
+		cloned.MaxIdleConnsPerHost = k8sMaxIdleConnsPerHost
+	}
+	if cloned.MaxConnsPerHost == 0 || cloned.MaxConnsPerHost > k8sMaxConnsPerHost {
+		cloned.MaxConnsPerHost = k8sMaxConnsPerHost
+	}
+	return cloned
 }
 
 func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string, remoteIP string) (AppCredential, error) {
@@ -461,7 +494,7 @@ func resolveNamespace(namespace string) string {
 }
 
 func resolveAppGroupParentNameFromMetadata(metadata k8sObjectMeta) string {
-	for _, key := range []string{"w7.cc/real-group-name", "w7.cc/group-name"} {
+	for _, key := range []string{"w7.cc/parent-group-name", "w7.cc/group-name"} {
 		if value := metadata.Annotations[key]; value != "" {
 			return value
 		}

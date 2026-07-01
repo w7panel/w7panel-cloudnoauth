@@ -2,7 +2,6 @@ package controller
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +20,19 @@ import (
 
 const defaultAllowedProxyHost = "api.w7.cc"
 
-type proxyStartTimeContextKey struct{}
+const (
+	proxyMaxIdleConns        = 200
+	proxyMaxIdleConnsPerHost = 100
+	proxyMaxConnsPerHost     = 200
+)
+
+func newProxyTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = proxyMaxIdleConns
+	transport.MaxIdleConnsPerHost = proxyMaxIdleConnsPerHost
+	transport.MaxConnsPerHost = proxyMaxConnsPerHost
+	return transport
+}
 
 type Proxy struct {
 	controller.Abstract
@@ -35,7 +46,9 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 	if strings.TrimSpace(scheme) == "" {
 		scheme = "https"
 	}
-	proxy := &httputil.ReverseProxy{}
+	proxy := &httputil.ReverseProxy{
+		Transport: newProxyTransport(),
+	}
 	proxy.Director = func(req *http.Request) {
 		originalHost := req.Host
 		req.URL.Scheme = scheme
@@ -51,9 +64,6 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 			"status", resp.StatusCode,
 			"host", resp.Request.Host,
 		}
-		if startedAt, ok := resp.Request.Context().Value(proxyStartTimeContextKey{}).(time.Time); ok {
-			args = append(args, "duration", time.Since(startedAt))
-		}
 		slog.Info("proxy upstream response", args...)
 		return nil
 	}
@@ -63,9 +73,6 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 			"url", req.URL.String(),
 			"host", req.Host,
 			"error", err,
-		}
-		if startedAt, ok := req.Context().Value(proxyStartTimeContextKey{}).(time.Time); ok {
-			args = append(args, "duration", time.Since(startedAt))
 		}
 		slog.Error("proxy upstream error", args...)
 		http.Error(writer, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
@@ -126,8 +133,6 @@ func (c Proxy) Credential(ctx *gin.Context) {
 }
 
 func (c Proxy) Proxy(ctx *gin.Context) {
-	startedAt := time.Now()
-	ctx.Request = ctx.Request.WithContext(context.WithValue(ctx.Request.Context(), proxyStartTimeContextKey{}, startedAt))
 	slog.Info("proxy request received",
 		"method", ctx.Request.Method,
 		"path", ctx.Request.URL.Path,
@@ -197,26 +202,26 @@ func appendSignedBody(req *http.Request, resolveCredential func() (k8s.AppCreden
 
 	contentType := req.Header.Get("Content-Type")
 	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
-		return appendSignedFormBody(req, body, resolveCredential)
+		return appendSignedFormBody(req, body, contentType, resolveCredential)
 	}
 
-	return appendSignedJSONBody(req, body, resolveCredential)
+	return appendSignedJSONBody(req, body, contentType, resolveCredential)
 }
 
-func appendSignedFormBody(req *http.Request, body []byte, resolveCredential func() (k8s.AppCredential, error)) error {
+func appendSignedFormBody(req *http.Request, body []byte, contentType string, resolveCredential func() (k8s.AppCredential, error)) error {
 	data, err := helper.ParsePHPFormBody(body)
 	if err != nil {
 		return err
 	}
 	if _, exists := data["sign"]; exists {
-		resetRequestBody(req, "application/x-www-form-urlencoded", body)
+		resetRequestBody(req, contentType, body)
 		return nil
 	}
 
 	credential, err := resolveCredential()
 	if err != nil {
-		if isSkippableCredentialError(err) {
-			resetRequestBody(req, "application/x-www-form-urlencoded", body)
+		if k8s.IsSkippableCredentialError(err) {
+			resetRequestBody(req, contentType, body)
 			return nil
 		}
 		return err
@@ -233,11 +238,11 @@ func appendSignedFormBody(req *http.Request, body []byte, resolveCredential func
 	data["sign"] = helper.BuildSign(data, credential.AppSecret)
 
 	encodedBody := helper.EncodePHPQuery(data)
-	resetRequestBody(req, "application/x-www-form-urlencoded", []byte(encodedBody))
+	resetRequestBody(req, contentType, []byte(encodedBody))
 	return nil
 }
 
-func appendSignedJSONBody(req *http.Request, body []byte, resolveCredential func() (k8s.AppCredential, error)) error {
+func appendSignedJSONBody(req *http.Request, body []byte, contentType string, resolveCredential func() (k8s.AppCredential, error)) error {
 	data := map[string]any{}
 	if len(bytes.TrimSpace(body)) > 0 {
 		decoder := json.NewDecoder(bytes.NewReader(body))
@@ -247,14 +252,14 @@ func appendSignedJSONBody(req *http.Request, body []byte, resolveCredential func
 		}
 	}
 	if _, exists := data["sign"]; exists {
-		resetRequestBody(req, "application/json", body)
+		resetRequestBody(req, contentType, body)
 		return nil
 	}
 
 	credential, err := resolveCredential()
 	if err != nil {
-		if isSkippableCredentialError(err) {
-			resetRequestBody(req, "application/json", body)
+		if k8s.IsSkippableCredentialError(err) {
+			resetRequestBody(req, contentType, body)
 			return nil
 		}
 		return err
@@ -274,7 +279,7 @@ func appendSignedJSONBody(req *http.Request, body []byte, resolveCredential func
 	if err != nil {
 		return err
 	}
-	resetRequestBody(req, "application/json", encodedBody)
+	resetRequestBody(req, contentType, encodedBody)
 	return nil
 }
 
@@ -287,8 +292,4 @@ func resetRawRequestBody(req *http.Request, body []byte) {
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-}
-
-func isSkippableCredentialError(err error) bool {
-	return k8s.IsSkippableCredentialError(err)
 }

@@ -1,8 +1,8 @@
-{{- define "w7panel-appid-proxy.name" -}}
+{{- define "w7panel-cloudnoauth.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.fullname" -}}
+{{- define "w7panel-cloudnoauth.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -15,29 +15,29 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.chart" -}}
+{{- define "w7panel-cloudnoauth.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.labels" -}}
-helm.sh/chart: {{ include "w7panel-appid-proxy.chart" . }}
-{{ include "w7panel-appid-proxy.selectorLabels" . }}
+{{- define "w7panel-cloudnoauth.labels" -}}
+helm.sh/chart: {{ include "w7panel-cloudnoauth.chart" . }}
+{{ include "w7panel-cloudnoauth.selectorLabels" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "w7panel-appid-proxy.name" . }}
+{{- define "w7panel-cloudnoauth.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "w7panel-cloudnoauth.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.serviceAccountName" -}}
+{{- define "w7panel-cloudnoauth.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-{{- default (include "w7panel-appid-proxy.fullname" .) .Values.serviceAccount.name -}}
+{{- default (include "w7panel-cloudnoauth.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "w7panel-appid-proxy.serviceFQDN" -}}
-{{- printf "%s.%s.svc.cluster.local" (include "w7panel-appid-proxy.fullname" .) .Release.Namespace -}}
+{{- define "w7panel-cloudnoauth.serviceFQDN" -}}
+{{- printf "%s.%s.svc.cluster.local" (include "w7panel-cloudnoauth.fullname" .) .Release.Namespace -}}
 {{- end -}}

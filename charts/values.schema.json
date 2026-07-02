@@ -49,6 +49,54 @@
     },
     "env": {
       "type": "object"
+    },
+    "privateDNS": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "ttl": {
+                "type": "integer"
+              },
+              "mxPriority": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ]
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "domain"
+      ]
     }
   }
 }

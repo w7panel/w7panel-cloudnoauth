@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  name: {{ include "w7panel-cloudnoauth.fullname" . }}
   labels:
-    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - ""
@@ -31,15 +31,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  name: {{ include "w7panel-cloudnoauth.fullname" . }}
   labels:
-    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "w7panel-appid-proxy.serviceAccountName" . }}
+    name: {{ include "w7panel-cloudnoauth.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  name: {{ include "w7panel-cloudnoauth.fullname" . }}
 {{- end }}

@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: zpk.w7.cc/public/w7panel-app-proxy
+  repository: zpk.w7.cc/public/w7panel-cloudnoauth
   pullPolicy: IfNotPresent
   tag: v1.0.9
 
@@ -76,3 +76,13 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 3
   targetCPUUtilizationPercentage: 80
+
+privateDNS:
+  enabled: true
+  name: api-w7-cc
+  domain: api.w7.cc
+  records:
+    - name: "@"
+      type: CNAME
+      value: "{{ include \"w7panel-cloudnoauth.serviceFQDN\" . }}."
+      ttl: 60

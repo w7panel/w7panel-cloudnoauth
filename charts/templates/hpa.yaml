@@ -2,14 +2,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  name: {{ include "w7panel-cloudnoauth.fullname" . }}
   labels:
-    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "w7panel-appid-proxy.fullname" . }}
+    name: {{ include "w7panel-cloudnoauth.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:

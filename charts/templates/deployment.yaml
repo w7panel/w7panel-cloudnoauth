@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "w7panel-appid-proxy.fullname" . }}
+  name: {{ include "w7panel-cloudnoauth.fullname" . }}
   labels:
-    {{- include "w7panel-appid-proxy.labels" . | nindent 4 }}
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "w7panel-appid-proxy.selectorLabels" . | nindent 6 }}
+      {{- include "w7panel-cloudnoauth.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -18,7 +18,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "w7panel-appid-proxy.selectorLabels" . | nindent 8 }}
+        {{- include "w7panel-cloudnoauth.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -27,7 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "w7panel-appid-proxy.serviceAccountName" . }}
+      serviceAccountName: {{ include "w7panel-cloudnoauth.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -38,7 +38,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ include "w7panel-appid-proxy.name" . }}
+        - name: {{ include "w7panel-cloudnoauth.name" . }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}

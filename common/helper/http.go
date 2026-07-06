@@ -8,12 +8,32 @@ import (
 )
 
 func RemoteIPFromRequest(req *http.Request) (string, error) {
-	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		if net.ParseIP(req.RemoteAddr) != nil {
-			return req.RemoteAddr, nil
+	if ip := firstHeaderIP(req.Header.Get("X-Real-IP")); ip != "" {
+		return ip, nil
+	}
+	if ip := firstHeaderIP(req.Header.Get("X-Forwarded-For")); ip != "" {
+		return ip, nil
+	}
+	return remoteAddrIP(req.RemoteAddr)
+}
+
+func firstHeaderIP(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		ip := strings.TrimSpace(part)
+		if net.ParseIP(ip) != nil {
+			return ip
 		}
-		return "", fmt.Errorf("invalid remote address %q: %w", req.RemoteAddr, err)
+	}
+	return ""
+}
+
+func remoteAddrIP(remoteAddr string) (string, error) {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		if net.ParseIP(remoteAddr) != nil {
+			return remoteAddr, nil
+		}
+		return "", fmt.Errorf("invalid remote address %q: %w", remoteAddr, err)
 	}
 	if net.ParseIP(host) == nil {
 		return "", fmt.Errorf("invalid remote ip %q", host)

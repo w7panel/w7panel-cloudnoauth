@@ -495,6 +495,11 @@ func resolveNamespace(namespace string) string {
 
 func resolveAppGroupParentNameFromMetadata(metadata k8sObjectMeta) string {
 	for _, key := range []string{"w7.cc/parent-group-name", "w7.cc/group-name"} {
+		if value := metadata.Labels[key]; value != "" {
+			return value
+		}
+	}
+	for _, key := range []string{"w7.cc/parent-group-name", "w7.cc/group-name"} {
 		if value := metadata.Annotations[key]; value != "" {
 			return value
 		}

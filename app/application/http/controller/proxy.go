@@ -121,7 +121,6 @@ func (c Proxy) Credential(ctx *gin.Context) {
 	}
 	slog.Info("credential resolve succeeded",
 		"remote_ip", remoteIP,
-		"pod", credential.PodName,
 		"appgroup", credential.AppGroup,
 		"appid", credential.AppID,
 	)

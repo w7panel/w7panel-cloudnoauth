@@ -12,7 +12,11 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -47,11 +51,10 @@ type K8sService struct {
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
+	clientset  kubernetes.Interface
 }
 
 type AppCredential struct {
-	RemoteIP  string
-	PodName   string
 	AppGroup  string
 	AppID     string
 	AppSecret string
@@ -63,6 +66,7 @@ type k8sList[T any] struct {
 
 type k8sObjectMeta struct {
 	Name            string              `json:"name"`
+	UID             string              `json:"uid"`
 	Namespace       string              `json:"namespace"`
 	Labels          map[string]string   `json:"labels"`
 	Annotations     map[string]string   `json:"annotations"`
@@ -75,11 +79,29 @@ type k8sOwnerReference struct {
 	Name       string `json:"name"`
 }
 
-type k8sPod struct {
+// K8sPod is the subset of Pod fields used when resolving application credentials.
+// Metadata.UID uniquely identifies a Pod instance, including across Pod name or
+// IP reuse.
+type K8sPod struct {
 	Metadata k8sObjectMeta `json:"metadata"`
 	Status   struct {
 		PodIP string `json:"podIP"`
 	} `json:"status"`
+}
+
+type PodEventType string
+
+const (
+	PodAdded   PodEventType = "added"
+	PodUpdated PodEventType = "updated"
+	PodDeleted PodEventType = "deleted"
+)
+
+// PodEvent is emitted by WatchPods. Consumers decide how Pod lifecycle
+// changes affect their own state, such as an IP-to-Pod cache.
+type PodEvent struct {
+	Type PodEventType
+	Pod  K8sPod
 }
 
 type appGroup struct {
@@ -119,13 +141,65 @@ func NewK8sService(k8sConfig string) (*K8sService, error) {
 	if err != nil {
 		return nil, err
 	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
 	return &K8sService{
-		BaseURL: strings.TrimRight(config.Host, "/"),
+		BaseURL:   strings.TrimRight(config.Host, "/"),
+		clientset: clientset,
 		HTTPClient: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
 		},
 	}, nil
+}
+
+// WatchPods starts a namespace-scoped Pod informer and emits lifecycle events
+// to handler. It owns Kubernetes observation only; consumers own any cache or
+// other reaction to those events.
+func (s *K8sService) WatchPods(ctx context.Context, namespace string, handler func(PodEvent)) error {
+	if s.clientset == nil {
+		return errors.New("kubernetes clientset is not configured")
+	}
+	namespace = resolveNamespace(namespace)
+	factory := informers.NewSharedInformerFactoryWithOptions(s.clientset, 0, informers.WithNamespace(namespace))
+	informer := factory.Core().V1().Pods().Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) { emitPodEvent(handler, PodAdded, obj) },
+		UpdateFunc: func(oldObj, newObj any) {
+			emitPodEvent(handler, PodDeleted, oldObj)
+			emitPodEvent(handler, PodUpdated, newObj)
+		},
+		DeleteFunc: func(obj any) { emitPodEvent(handler, PodDeleted, obj) },
+	})
+	factory.Start(ctx.Done())
+	syncCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if !cache.WaitForCacheSync(syncCtx.Done(), informer.HasSynced) {
+		return fmt.Errorf("synchronize pod watcher for namespace %s", namespace)
+	}
+	return nil
+}
+
+func emitPodEvent(handler func(PodEvent), eventType PodEventType, obj any) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			return
+		}
+		pod, ok = tombstone.Obj.(*corev1.Pod)
+		if !ok {
+			return
+		}
+	}
+	if pod.Status.PodIP == "" {
+		return
+	}
+	cached := K8sPod{Metadata: k8sObjectMeta{Name: pod.Name, UID: string(pod.UID), Namespace: pod.Namespace, Labels: pod.Labels, Annotations: pod.Annotations}}
+	cached.Status.PodIP = pod.Status.PodIP
+	handler(PodEvent{Type: eventType, Pod: cached})
 }
 
 func makeK8sConfig(k8sConfig string) (*rest.Config, error) {
@@ -154,28 +228,14 @@ func tuneK8sTransport(rt http.RoundTripper) http.RoundTripper {
 	return cloned
 }
 
-func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string, remoteIP string) (AppCredential, error) {
+// ResolveAppCredentialForPod resolves credentials for a Pod that has already
+// been identified from the request source IP.
+func (s *K8sService) ResolveAppCredentialForPod(ctx context.Context, namespace string, pod K8sPod) (AppCredential, error) {
 	namespace = resolveNamespace(namespace)
-	slog.Info("k8s resolve app credential started",
-		"namespace", namespace,
-		"remote_ip", remoteIP,
-	)
-
-	pod, err := s.QueryPodByIP(ctx, namespace, remoteIP)
-	if err != nil {
-		slog.Warn("k8s resolve pod by remote ip failed",
-			"namespace", namespace,
-			"remote_ip", remoteIP,
-			"error", err,
-		)
-		return AppCredential{}, err
-	}
-
 	parentName, err := s.ResolveAppGroupParentName(ctx, namespace, pod)
 	if err != nil {
 		slog.Warn("k8s resolve appgroup parent failed",
 			"namespace", namespace,
-			"remote_ip", remoteIP,
 			"pod", pod.Metadata.Name,
 			"error", err,
 		)
@@ -187,7 +247,6 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 		err = fmt.Errorf("%w: parent %s: %v", ErrAppGroupNotFound, parentName, err)
 		slog.Warn("k8s resolve appgroup by name failed",
 			"namespace", namespace,
-			"remote_ip", remoteIP,
 			"pod", pod.Metadata.Name,
 			"appgroup", parentName,
 			"error", err,
@@ -199,7 +258,6 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 	if appID == "" || appSecret == "" {
 		slog.Warn("k8s app credential annotation missing",
 			"namespace", namespace,
-			"remote_ip", remoteIP,
 			"pod", pod.Metadata.Name,
 			"appgroup", group.Metadata.Name,
 			"has_appid", appID != "",
@@ -210,22 +268,19 @@ func (s *K8sService) ResolveAppCredential(ctx context.Context, namespace string,
 
 	slog.Info("k8s resolve app credential succeeded",
 		"namespace", namespace,
-		"remote_ip", remoteIP,
 		"pod", pod.Metadata.Name,
 		"appgroup", group.Metadata.Name,
 		"appid", appID,
 	)
 
 	return AppCredential{
-		RemoteIP:  remoteIP,
-		PodName:   pod.Metadata.Name,
 		AppGroup:  group.Metadata.Name,
 		AppID:     appID,
 		AppSecret: appSecret,
 	}, nil
 }
 
-func (s *K8sService) ResolveAppGroupParentName(ctx context.Context, namespace string, pod k8sPod) (string, error) {
+func (s *K8sService) ResolveAppGroupParentName(ctx context.Context, namespace string, pod K8sPod) (string, error) {
 	if parentName := resolveAppGroupParentNameFromMetadata(pod.Metadata); parentName != "" {
 		slog.Info("k8s appgroup parent resolved from pod metadata",
 			"namespace", namespace,
@@ -252,7 +307,7 @@ func (s *K8sService) ResolveAppGroupParentName(ctx context.Context, namespace st
 	return "", fmt.Errorf("%w: appgroup parent annotation not found in deployment %s for pod %s", ErrAppGroupParentNotFound, deployment.Metadata.Name, pod.Metadata.Name)
 }
 
-func (s *K8sService) QueryDeploymentByPod(ctx context.Context, namespace string, pod k8sPod) (k8sDeployment, error) {
+func (s *K8sService) QueryDeploymentByPod(ctx context.Context, namespace string, pod K8sPod) (k8sDeployment, error) {
 	replicaSetName := ownerReferenceName(pod.Metadata.OwnerReferences, "ReplicaSet")
 	if replicaSetName == "" {
 		return k8sDeployment{}, fmt.Errorf("%w: replicaset owner not found in pod %s", ErrAppGroupParentNotFound, pod.Metadata.Name)
@@ -347,9 +402,9 @@ func (s *K8sService) QueryDeployment(ctx context.Context, namespace string, name
 	return *deployment, nil
 }
 
-func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteIP string) (k8sPod, error) {
+func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteIP string) (K8sPod, error) {
 	namespace = resolveNamespace(namespace)
-	var pods k8sList[k8sPod]
+	var pods k8sList[K8sPod]
 	slog.Debug("k8s query pod by ip",
 		"namespace", namespace,
 		"remote_ip", remoteIP,
@@ -361,21 +416,21 @@ func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteI
 		url.QueryEscape("status.podIP="+remoteIP),
 	), nil)
 	if err != nil {
-		return k8sPod{}, err
+		return K8sPod{}, err
 	}
 
 	resp, err := s.doPanelReq(req)
 	if err != nil {
-		return k8sPod{}, err
+		return K8sPod{}, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return k8sPod{}, err
+		return K8sPod{}, err
 	}
 	if err = json.Unmarshal(respBody, &pods); err != nil {
-		return k8sPod{}, err
+		return K8sPod{}, err
 	}
 
 	for _, pod := range pods.Items {
@@ -389,7 +444,7 @@ func (s *K8sService) QueryPodByIP(ctx context.Context, namespace string, remoteI
 		}
 	}
 
-	return k8sPod{}, fmt.Errorf("pod not found by remote ip %s", remoteIP)
+	return K8sPod{}, fmt.Errorf("pod not found by remote ip %s", remoteIP)
 }
 
 func (s *K8sService) QueryAppGroup(ctx context.Context, namespace string, name string) (appGroup, error) {
@@ -494,12 +549,12 @@ func resolveNamespace(namespace string) string {
 }
 
 func resolveAppGroupParentNameFromMetadata(metadata k8sObjectMeta) string {
-	for _, key := range []string{"w7.cc/parent-group-name", "w7.cc/group-name"} {
+	for _, key := range []string{"w7.cc/owner-group-name", "w7.cc/parent-group-name", "w7.cc/group-name"} {
 		if value := metadata.Labels[key]; value != "" {
 			return value
 		}
 	}
-	for _, key := range []string{"w7.cc/parent-group-name", "w7.cc/group-name"} {
+	for _, key := range []string{"w7.cc/owner-group-name", "w7.cc/parent-group-name", "w7.cc/group-name"} {
 		if value := metadata.Annotations[key]; value != "" {
 			return value
 		}

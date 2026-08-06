@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,10 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	if err != nil {
 		panic(err)
 	}
+	podCache := logic.NewPodCache(k8sService)
+	if err := podCache.Start(context.Background(), config.GetString("panel.namespace")); err != nil {
+		panic(err)
+	}
 
 	cacheTTL := time.Duration(config.GetInt("panel.credential_cache_seconds")) * time.Second
 	if cacheTTL <= 0 {
@@ -40,6 +45,7 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 		Cache:            cache.New(cacheTTL, cacheTTL*2),
 		NegativeCacheTTL: negativeCacheTTL,
 		K8sService:       k8sService,
+		PodCache:         podCache,
 	}
 
 	proxyController := controller.NewProxy(

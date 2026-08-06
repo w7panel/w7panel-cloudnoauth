@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: zpk.w7.cc/public/w7panel-cloudnoauth
   pullPolicy: IfNotPresent
-  tag: v1.0.12
+  tag: v1.0.13
 
 imagePullSecrets: []
 nameOverride: ""
@@ -30,7 +30,8 @@ service:
   annotations: {}
 
 ingress:
-  enabled: false
+  # TLS is terminated by Higress before traffic is forwarded to the HTTP-only Service.
+  enabled: true
   className: higress
   annotations: {}
   host: api.w7.cc
@@ -43,14 +44,14 @@ ingress:
     enabled: true
     issuer:
       create: false
-      name: w7-letsencrypt-prod
+      name: w7panel-root-ca-issuer
       kind: ClusterIssuer
       group: cert-manager.io
       selfSigned: false
     certificate:
       create: true
       name: ""
-      duration: 87600h
+      duration: 2160h
       renewBefore: 720h
       privateKey:
         algorithm: RSA

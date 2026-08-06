@@ -14,6 +14,7 @@ const credentialResolveTimeout = 5 * time.Second
 
 type Credential struct {
 	K8sService       *k8s.K8sService
+	PodCache         *PodCache
 	Namespace        string
 	Cache            *cache.Cache
 	NegativeCacheTTL time.Duration
@@ -26,7 +27,13 @@ type credentialCacheItem struct {
 }
 
 func (logic *Credential) ResolveByRemoteIP(ctx context.Context, remoteIP string) (k8s.AppCredential, error) {
-	cacheKey := fmt.Sprintf("%s:%s", logic.Namespace, remoteIP)
+	pod, err := logic.PodCache.Get(ctx, logic.Namespace, remoteIP)
+	if err != nil {
+		return k8s.AppCredential{}, err
+	}
+	podUID := pod.Metadata.UID
+
+	cacheKey := fmt.Sprintf("%s:pod:%s", logic.Namespace, podUID)
 	if credential, err, ok := logic.getCache(cacheKey); ok {
 		return credential, err
 	}
@@ -39,7 +46,7 @@ func (logic *Credential) ResolveByRemoteIP(ctx context.Context, remoteIP string)
 		resolveCtx, cancel := context.WithTimeout(context.Background(), credentialResolveTimeout)
 		defer cancel()
 
-		credential, err := logic.K8sService.ResolveAppCredential(resolveCtx, logic.Namespace, remoteIP)
+		credential, err := logic.K8sService.ResolveAppCredentialForPod(resolveCtx, logic.Namespace, pod)
 		if err != nil {
 			if k8s.IsSkippableCredentialError(err) {
 				logic.setNegativeCache(cacheKey, credential, err)

@@ -18,23 +18,23 @@ import (
 	"github.com/we7coreteam/w7-rangine-go/v2/src/http/controller"
 )
 
-const defaultAllowedProxyHost = "api.w7.cc"
+const defaultAllowedOutboundHost = "api.w7.cc"
 
 const (
-	proxyMaxIdleConns        = 200
-	proxyMaxIdleConnsPerHost = 100
-	proxyMaxConnsPerHost     = 200
+	outboundMaxIdleConns        = 200
+	outboundMaxIdleConnsPerHost = 100
+	outboundMaxConnsPerHost     = 200
 )
 
-func newProxyTransport() *http.Transport {
+func newOutboundTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConns = proxyMaxIdleConns
-	transport.MaxIdleConnsPerHost = proxyMaxIdleConnsPerHost
-	transport.MaxConnsPerHost = proxyMaxConnsPerHost
+	transport.MaxIdleConns = outboundMaxIdleConns
+	transport.MaxIdleConnsPerHost = outboundMaxIdleConnsPerHost
+	transport.MaxConnsPerHost = outboundMaxConnsPerHost
 	return transport
 }
 
-type Proxy struct {
+type Outbound struct {
 	controller.Abstract
 	CredentialLogic *logic.Credential
 	Scheme          string
@@ -42,12 +42,12 @@ type Proxy struct {
 	reverseProxy    *httputil.ReverseProxy
 }
 
-func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost string) Proxy {
+func NewOutbound(credentialLogic *logic.Credential, scheme string, allowedHost string) Outbound {
 	if strings.TrimSpace(scheme) == "" {
 		scheme = "https"
 	}
 	proxy := &httputil.ReverseProxy{
-		Transport: newProxyTransport(),
+		Transport: newOutboundTransport(),
 	}
 	proxy.Director = func(req *http.Request) {
 		originalHost := req.Host
@@ -64,7 +64,7 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 			"status", resp.StatusCode,
 			"host", resp.Request.Host,
 		}
-		slog.Info("proxy upstream response", args...)
+		slog.Info("outbound upstream response", args...)
 		return nil
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, req *http.Request, err error) {
@@ -74,65 +74,20 @@ func NewProxy(credentialLogic *logic.Credential, scheme string, allowedHost stri
 			"host", req.Host,
 			"error", err,
 		}
-		slog.Error("proxy upstream error", args...)
+		slog.Error("outbound upstream error", args...)
 		http.Error(writer, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 	}
 
-	return Proxy{
+	return Outbound{
 		CredentialLogic: credentialLogic,
 		Scheme:          scheme,
-		AllowedHosts:    helper.ParseAllowedHosts(allowedHost, defaultAllowedProxyHost),
+		AllowedHosts:    helper.ParseAllowedHosts(allowedHost, defaultAllowedOutboundHost),
 		reverseProxy:    proxy,
 	}
 }
 
-func (c Proxy) Live(ctx *gin.Context) {
-	c.JsonResponseWithoutError(ctx, gin.H{
-		"message": "ok",
-	})
-}
-
-func (c Proxy) Credential(ctx *gin.Context) {
-	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
-	if err != nil {
-		slog.Warn("credential remote ip parse failed",
-			"remote_addr", ctx.Request.RemoteAddr,
-			"error", err,
-		)
-		c.JsonResponseWithServerError(ctx, err)
-		return
-	}
-
-	slog.Info("credential resolve requested",
-		"remote_ip", remoteIP,
-		"path", ctx.Request.URL.Path,
-	)
-	credential, err := c.CredentialLogic.ResolveByRemoteIP(
-		ctx.Request.Context(),
-		remoteIP,
-	)
-	if err != nil {
-		slog.Warn("credential resolve failed",
-			"remote_ip", remoteIP,
-			"error", err,
-		)
-		c.JsonResponseWithServerError(ctx, err)
-		return
-	}
-	slog.Info("credential resolve succeeded",
-		"remote_ip", remoteIP,
-		"appgroup", credential.AppGroup,
-		"appid", credential.AppID,
-	)
-
-	c.JsonResponseWithoutError(ctx, gin.H{
-		"appid":     credential.AppID,
-		"appsecret": credential.AppSecret,
-	})
-}
-
-func (c Proxy) Proxy(ctx *gin.Context) {
-	slog.Info("proxy request received",
+func (c Outbound) Forward(ctx *gin.Context) {
+	slog.Info("outbound request received",
 		"method", ctx.Request.Method,
 		"path", ctx.Request.URL.Path,
 		"query", ctx.Request.URL.RawQuery,
@@ -143,7 +98,7 @@ func (c Proxy) Proxy(ctx *gin.Context) {
 	)
 
 	if !helper.IsAllowedHost(ctx.Request.Host, c.AllowedHosts) {
-		slog.Warn("proxy host rejected",
+		slog.Warn("outbound host rejected",
 			"host", ctx.Request.Host,
 			"allowed_hosts", c.AllowedHosts,
 		)
@@ -153,24 +108,10 @@ func (c Proxy) Proxy(ctx *gin.Context) {
 		return
 	}
 
-	remoteIP, err := helper.RemoteIPFromRequest(ctx.Request)
-	if err != nil {
-		slog.Warn("proxy remote ip parse failed",
-			"remote_addr", ctx.Request.RemoteAddr,
-			"error", err,
-		)
-		c.JsonResponseWithServerError(ctx, err)
-		return
-	}
-
 	if err := appendSignedBody(ctx.Request, func() (k8s.AppCredential, error) {
-		return c.CredentialLogic.ResolveByRemoteIP(
-			ctx.Request.Context(),
-			remoteIP,
-		)
+		return c.CredentialLogic.Resolve(ctx.Request.Context())
 	}); err != nil {
-		slog.Warn("proxy append signed body failed",
-			"remote_ip", remoteIP,
+		slog.Warn("outbound append signed body failed",
 			"path", ctx.Request.URL.Path,
 			"error", err,
 		)
@@ -178,8 +119,7 @@ func (c Proxy) Proxy(ctx *gin.Context) {
 		return
 	}
 
-	slog.Info("proxy forwarding request",
-		"remote_ip", remoteIP,
+	slog.Info("outbound forwarding request",
 		"method", ctx.Request.Method,
 		"host", ctx.Request.Host,
 		"path", ctx.Request.URL.Path,

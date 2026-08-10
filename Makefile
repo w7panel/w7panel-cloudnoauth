@@ -3,8 +3,8 @@ HELM_VALUES_FILE := $(HELM_CHART_DIR)/values.yaml
 HELM_CHART_FILE := $(HELM_CHART_DIR)/Chart.yaml
 HELM_PACKAGE_DIR ?= charts
 
-HELM_IMAGE_REPOSITORY := $(shell awk '/^image:/{flag=1; next} flag && /^[^[:space:]]/{flag=0} flag && $$1=="repository:" {print $$2; exit}' $(HELM_VALUES_FILE))
-HELM_IMAGE_TAG := $(shell awk '/^image:/{flag=1; next} flag && /^[^[:space:]]/{flag=0} flag && $$1=="tag:" {print $$2; exit}' $(HELM_VALUES_FILE))
+HELM_IMAGE_REPOSITORY := $(shell awk '/^sidecar:/{flag=1; next} flag && $$1=="repository:" {print $$2; exit}' $(HELM_VALUES_FILE))
+HELM_IMAGE_TAG := $(shell awk '/^sidecar:/{flag=1; next} flag && $$1=="tag:" {print $$2; exit}' $(HELM_VALUES_FILE))
 HELM_CHART_VERSION ?= $(shell awk '$$1=="version:" {print $$2; exit}' $(HELM_CHART_FILE))
 
 IMAGE_REPOSITORY ?= $(HELM_IMAGE_REPOSITORY)

@@ -1,7 +1,10 @@
 package application
 
 import (
-	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,11 +30,6 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	if err != nil {
 		panic(err)
 	}
-	podCache := logic.NewPodCache(k8sService)
-	if err := podCache.Start(context.Background(), config.GetString("panel.namespace")); err != nil {
-		panic(err)
-	}
-
 	cacheTTL := time.Duration(config.GetInt("panel.credential_cache_seconds")) * time.Second
 	if cacheTTL <= 0 {
 		cacheTTL = 10 * time.Minute
@@ -42,23 +40,43 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	}
 	credentialLogic := &logic.Credential{
 		Namespace:        config.GetString("panel.namespace"),
+		PodName:          config.GetString("panel.pod_name"),
 		Cache:            cache.New(cacheTTL, cacheTTL*2),
 		NegativeCacheTTL: negativeCacheTTL,
 		K8sService:       k8sService,
-		PodCache:         podCache,
 	}
 
-	proxyController := controller.NewProxy(
+	inbound, err := controller.NewInbound(
 		credentialLogic,
-		config.GetString("proxy.scheme"),
-		config.GetString("proxy.allowed_host"),
+		config.GetString("inbound.target_scheme"),
+		fmt.Sprintf("%s:%d", config.GetString("inbound.target_host"), config.GetInt("inbound.target_port")),
 	)
+	if err != nil {
+		panic(err)
+	}
+	server := &http.Server{
+		Addr:              fmt.Sprintf("0.0.0.0:%d", config.GetInt("inbound.listen_port")),
+		Handler:           inbound,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		slog.Info("inbound proxy listening", "address", server.Addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			panic(err)
+		}
+	}()
 
+	outbound := controller.NewOutbound(
+		credentialLogic,
+		config.GetString("outbound.scheme"),
+		config.GetString("outbound.allowed_host"),
+	)
+	sidecar := controller.NewSidecar(credentialLogic)
 	httpServer.RegisterRouters(func(engine *gin.Engine) {
 		api := engine.Group("/api")
-		api.GET("/live", proxyController.Live)
-		api.GET("/app/info", proxyController.Credential)
+		api.GET("/live", sidecar.Live)
+		api.GET("/app/info", sidecar.Credential)
 
-		engine.NoRoute(proxyController.Proxy)
+		engine.NoRoute(outbound.Forward)
 	})
 }

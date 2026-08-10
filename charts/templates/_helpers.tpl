@@ -37,7 +37,3 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
-
-{{- define "w7panel-cloudnoauth.serviceFQDN" -}}
-{{- printf "%s.%s.svc.cluster.local" (include "w7panel-cloudnoauth.fullname" .) .Release.Namespace -}}
-{{- end -}}

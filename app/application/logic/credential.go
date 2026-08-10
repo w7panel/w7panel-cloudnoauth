@@ -14,8 +14,8 @@ const credentialResolveTimeout = 5 * time.Second
 
 type Credential struct {
 	K8sService       *k8s.K8sService
-	PodCache         *PodCache
 	Namespace        string
+	PodName          string
 	Cache            *cache.Cache
 	NegativeCacheTTL time.Duration
 	requests         singleflight.Group
@@ -26,14 +26,15 @@ type credentialCacheItem struct {
 	Err        error
 }
 
-func (logic *Credential) ResolveByRemoteIP(ctx context.Context, remoteIP string) (k8s.AppCredential, error) {
-	pod, err := logic.PodCache.Get(ctx, logic.Namespace, remoteIP)
-	if err != nil {
-		return k8s.AppCredential{}, err
+func (logic *Credential) Resolve(ctx context.Context) (k8s.AppCredential, error) {
+	if logic.PodName == "" {
+		return k8s.AppCredential{}, fmt.Errorf("pod name is not configured")
 	}
-	podUID := pod.Metadata.UID
+	if logic.K8sService == nil {
+		return k8s.AppCredential{}, fmt.Errorf("kubernetes service is not configured")
+	}
 
-	cacheKey := fmt.Sprintf("%s:pod:%s", logic.Namespace, podUID)
+	cacheKey := fmt.Sprintf("%s:pod:%s", logic.Namespace, logic.PodName)
 	if credential, err, ok := logic.getCache(cacheKey); ok {
 		return credential, err
 	}
@@ -46,7 +47,7 @@ func (logic *Credential) ResolveByRemoteIP(ctx context.Context, remoteIP string)
 		resolveCtx, cancel := context.WithTimeout(context.Background(), credentialResolveTimeout)
 		defer cancel()
 
-		credential, err := logic.K8sService.ResolveAppCredentialForPod(resolveCtx, logic.Namespace, pod)
+		credential, err := logic.K8sService.ResolveAppCredentialForPod(resolveCtx, logic.Namespace, logic.PodName)
 		if err != nil {
 			if k8s.IsSkippableCredentialError(err) {
 				logic.setNegativeCache(cacheKey, credential, err)
@@ -58,24 +59,19 @@ func (logic *Credential) ResolveByRemoteIP(ctx context.Context, remoteIP string)
 		return credential, nil
 	})
 
-	var result singleflight.Result
 	select {
-	case result = <-ch:
+	case result := <-ch:
+		if result.Err != nil {
+			return k8s.AppCredential{}, result.Err
+		}
+		credential, ok := result.Val.(k8s.AppCredential)
+		if !ok {
+			return k8s.AppCredential{}, fmt.Errorf("unexpected credential cache value type %T", result.Val)
+		}
+		return credential, nil
 	case <-ctx.Done():
 		return k8s.AppCredential{}, ctx.Err()
 	}
-
-	if result.Err != nil {
-		return k8s.AppCredential{}, result.Err
-	}
-
-	value := result.Val
-
-	credential, ok := value.(k8s.AppCredential)
-	if !ok {
-		return k8s.AppCredential{}, fmt.Errorf("unexpected credential cache value type %T", value)
-	}
-	return credential, nil
 }
 
 func (logic *Credential) getCache(key string) (k8s.AppCredential, error, bool) {

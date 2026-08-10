@@ -1,13 +1,21 @@
 apiVersion: v2
 name: w7panel-cloudnoauth
-description: API proxy for in-cluster unauthenticated requests to api.w7.cc.
-type: application
-version: 0.1.2
-appVersion: "v1.0.13"
+description: Transparent signing sidecar for requests to api.w7.cc.
+type: library
+version: 0.3.0
+appVersion: "v1.0.14"
 
 
 
 annotations:
+  w7.cc/manifest-type: "sidecar"
+  w7.cc/sidecar-pod-annotations-template: "w7panel-cloudnoauth.podAnnotations"
+  w7.cc/sidecar-init-template: "w7panel-cloudnoauth.initContainer"
+  w7.cc/sidecar-container-template: "w7panel-cloudnoauth.container"
+  w7.cc/sidecar-job-container-template: "w7panel-cloudnoauth.jobContainer"
+  w7.cc/sidecar-volumes-template: "w7panel-cloudnoauth.volumes"
+  w7.cc/sidecar-resources-template: "w7panel-cloudnoauth.rbac"
+  w7.cc/sidecar-target-port-value: "sidecar.inbound.targetPort"
   w7.cc/title: "cloud_app授权代理"
   w7.cc/description: "cloud_app授权代理"
   title: "cloud_app授权代理"

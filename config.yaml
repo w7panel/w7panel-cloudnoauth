@@ -5,24 +5,30 @@ app:
 server:
   http:
     host: 0.0.0.0
-    port: ${SERVER_PORT-80}
+    port: ${SERVER_PORT-15080}
+    tls:
+      enable: ${SERVER_TLS_ENABLE-true}
+      port: ${SERVER_TLS_PORT-15443}
+      cert_file: ${SERVER_TLS_CERT_FILE-/var/run/w7panel-cloudnoauth/tls.crt}
+      key_file: ${SERVER_TLS_KEY_FILE-/var/run/w7panel-cloudnoauth/tls.key}
 log:
   default:
     driver: stack
     channels:
-      - file
       - console
-  file:
-    driver: file
-    path: run.log
-    level: info
   console:
     driver: console
     level: debug
 panel:
   namespace: ${PANEL_NAMESPACE-default}
+  pod_name: ${POD_NAME-}
   credential_cache_seconds: ${PANEL_CREDENTIAL_CACHE_SECONDS-600}
   credential_negative_cache_seconds: ${PANEL_CREDENTIAL_NEGATIVE_CACHE_SECONDS-60}
-proxy:
+outbound:
   scheme: ${API_PROXY_SCHEME-https}
   allowed_host: ${API_PROXY_ALLOWED_HOST-api.w7.cc}
+inbound:
+  listen_port: ${INBOUND_LISTEN_PORT-15081}
+  target_scheme: ${INBOUND_TARGET_SCHEME-http}
+  target_host: ${INBOUND_TARGET_HOST-127.0.0.1}
+  target_port: ${INBOUND_TARGET_PORT-8080}

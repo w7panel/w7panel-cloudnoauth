@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/fcgi"
 	"net/http/httputil"
 	"net/url"
 	"strings"
@@ -19,9 +20,15 @@ import (
 
 var signatureFields = []string{"appid", "timestamp", "nonce", "sign"}
 
+const (
+	requestSourceHeader = "X-Request-Source"
+	apiRequestSource    = "api.w7.cc"
+)
+
 type Inbound struct {
 	CredentialLogic *logic.Credential
 	reverseProxy    *httputil.ReverseProxy
+	fastCGIProxy    *fastCGIProxy
 }
 
 func NewInbound(credentialLogic *logic.Credential, targetScheme, targetHost string) (*Inbound, error) {
@@ -34,20 +41,42 @@ func NewInbound(credentialLogic *logic.Credential, targetScheme, targetHost stri
 		slog.Error("inbound proxy error", "path", req.URL.Path, "error", err)
 		http.Error(writer, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 	}
-	return &Inbound{CredentialLogic: credentialLogic, reverseProxy: proxy}, nil
+	return &Inbound{
+		CredentialLogic: credentialLogic,
+		reverseProxy:    proxy,
+		fastCGIProxy:    newFastCGIProxy(targetHost),
+	}, nil
 }
 
 func (h *Inbound) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	slog.Info("inbound http request", "path", req.URL.Path)
-	err := verifyAndStripSignedBody(req, func() (k8s.AppCredential, error) {
-		return h.CredentialLogic.Resolve(req.Context())
-	})
-	if err != nil {
-		slog.Warn("inbound signature rejected", "path", req.URL.Path, "error", err)
-		http.Error(writer, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+	slog.Info("inbound request", "path", req.URL.Path)
+	if requiresInboundSignature(req) {
+		err := verifyAndStripSignedBody(req, func() (k8s.AppCredential, error) {
+			return h.CredentialLogic.Resolve(req.Context())
+		})
+		if err != nil {
+			slog.Warn("inbound signature rejected", "path", req.URL.Path, "error", err)
+			http.Error(writer, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+	}
+	if fcgi.ProcessEnv(req) != nil {
+		h.fastCGIProxy.ServeHTTP(writer, req)
 		return
 	}
 	h.reverseProxy.ServeHTTP(writer, req)
+}
+
+// requiresInboundSignature recognizes the platform API request marker. Only a
+// successfully verified request may reach the application with this header.
+func requiresInboundSignature(req *http.Request) bool {
+	source := strings.TrimSpace(req.Header.Get(requestSourceHeader))
+	if strings.EqualFold(source, apiRequestSource) {
+		req.Header.Set(requestSourceHeader, apiRequestSource)
+		return true
+	}
+	req.Header.Del(requestSourceHeader)
+	return false
 }
 
 func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.AppCredential, error)) error {
@@ -64,7 +93,6 @@ func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.A
 			return err
 		}
 		encoded, changed, err := verifyAndStripSignature(data, resolveCredential)
-		slog.Info("inbound signature rejected", "path", req.URL.Path, "content-type", contentType, "encoded", encoded, "changed", changed)
 		if err != nil {
 			return err
 		}
@@ -85,7 +113,6 @@ func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.A
 		}
 	}
 	stripped, changed, err := verifyAndStripSignature(data, resolveCredential)
-	slog.Info("inbound signature rejected", "path", req.URL.Path, "content-type", contentType, "stripped", stripped, "changed", changed)
 	if err != nil {
 		return err
 	}
@@ -104,7 +131,7 @@ func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.A
 func verifyAndStripSignature(data map[string]any, resolveCredential func() (k8s.AppCredential, error)) (map[string]any, bool, error) {
 	signValue, signed := data["sign"]
 	if !signed {
-		return data, false, nil
+		return nil, false, fmt.Errorf("signature is required")
 	}
 	signature, ok := signValue.(string)
 	if !ok || signature == "" {

@@ -142,23 +142,33 @@ W7PANEL_INBOUND
 REDIRECT 到 Sidecar:15081
 ```
 
-通常由外部 Ingress 或网关先完成 TLS 终止，再以 HTTP 请求访问 Pod 的业务端口。
-Sidecar 的入站监听协议和业务目标由 `inbound.target_scheme`、`inbound.target_host`、
-`inbound.target_port` 配置，默认转发到 `http://127.0.0.1:8080`。
+`15081` 会读取连接首字节自动区分 HTTP 与 FastCGI。HTTP 请求继续由 Go HTTP server
+处理；FastCGI version 1 请求由 `net/http/fcgi` 解码。两种协议复用同一个监听端口和验签
+逻辑，不需要在 values 中手工指定协议。
+
+HTTP 模式的业务目标由 `inbound.target_scheme`、`inbound.target_host`、
+`inbound.target_port` 配置，默认转发到 `http://127.0.0.1:8080`。FastCGI 模式忽略
+`target_scheme`，通过 `gofast` 将请求重新编码并转发到
+`inbound.target_host:inbound.target_port`；例如 PHP-FPM 使用 `127.0.0.1:9000`。
 
 ### 2. 入站验签
 
-请求进入 `Inbound` controller 后：
+HTTP 或 FastCGI 请求进入 `Inbound` controller 后：
 
-1. 读取 JSON 或表单请求体。
-2. 如果没有 `sign` 字段，原样转发到业务容器。
-3. 如果存在 `sign`，使用当前 Pod 对应 AppGroup 的 `appsecret` 验证签名。
+1. `api.w7.cc` 发起的入站请求必须携带 `X-Request-Source: api.w7.cc`。
+2. 没有该标记的普通请求不执行平台验签，并原样转发到业务容器；其他标记值会在转发前删除。
+3. 标记为 `api.w7.cc` 的请求必须包含签名，并使用当前 Pod 对应 AppGroup 的
+   `appsecret` 验证签名。
 4. 验证 `appid`、`timestamp`、`nonce`、`sign` 成功后，从请求体删除这四个字段。
-5. 将清理后的业务数据转发到 `127.0.0.1:8080`。
-6. 签名格式错误、appid 不匹配、凭据查询失败或签名不一致时返回 HTTP `401`，不会访问业务容器。
+5. 验签成功的 `X-Request-Source` 会保留，业务应用可用它判断请求来源。
+6. 使用与入站相同的协议，将清理后的业务数据转发到配置的目标地址。
+7. 缺少签名、签名格式错误、appid 不匹配、凭据查询失败或签名不一致时返回 HTTP `401`，
+   不会访问业务容器。
 
-签名字段只会从请求体中删除，不会修改 URL 查询参数或 HTTP Header。JSON 请求保持 JSON
-格式，表单请求保持 `application/x-www-form-urlencoded` 格式。
+签名字段只会从请求体中删除，不会修改 URL 查询参数。JSON 请求保持 JSON 格式，表单请求
+保持 `application/x-www-form-urlencoded` 格式。FastCGI 转发会保留
+`SCRIPT_FILENAME`、`DOCUMENT_ROOT` 等 Nginx 传入的 CGI 参数，并根据修改后的 body 更新
+`CONTENT_LENGTH`。
 
 ## Sidecar 自身接口
 
@@ -283,12 +293,16 @@ kubectl exec <pod> -c <业务容器> -- \
 
 ### 入站业务证书
 
-默认入站路径是网关终止 TLS，然后 Sidecar 通过 HTTP 转发到
+HTTP 入站路径通常由网关终止 TLS，然后 Sidecar 通过 HTTP 转发到
 `http://127.0.0.1:8080`。在这个默认模式下，业务容器不需要提供服务端证书。
 
 如果把 `sidecar.inbound.targetScheme` 改为 `https`，则业务容器必须自行监听 HTTPS，
 并向 Sidecar 提供可验证的服务端证书；同时要确保 Sidecar 信任该证书的签发 CA，并且
 证书主机名与 profile 的 `INBOUND_TARGET_HOST` 一致。当前默认配置不处理这项额外证书分发。
+
+FastCGI 入站本身不使用 TLS；通常由外层 Nginx 终止 TLS，再通过 FastCGI 请求 PHP-FPM。
+当目标端口是 PHP-FPM `9000` 时，将 `sidecar.inbound.targetPort` 设置为 `9000` 即可，
+同一个 Sidecar 镜像仍兼容 HTTP 类型的工作负载。
 
 ## 故障排查
 

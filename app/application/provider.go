@@ -4,13 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/http/fcgi"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	cache "github.com/patrickmn/go-cache"
 	"github.com/w7panel/w7panel-cloudnoauth/app/application/http/controller"
 	"github.com/w7panel/w7panel-cloudnoauth/app/application/logic"
+	"github.com/w7panel/w7panel-cloudnoauth/common/helper/net/listener"
 	"github.com/w7panel/w7panel-cloudnoauth/common/service/k8s"
 	"github.com/we7coreteam/w7-rangine-go/v2/pkg/support/facade"
 	http_server "github.com/we7coreteam/w7-rangine-go/v2/src/http/server"
@@ -54,14 +57,26 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 	if err != nil {
 		panic(err)
 	}
+	inboundAddress := fmt.Sprintf("0.0.0.0:%d", config.GetInt("inbound.listen_port"))
+	inboundListener, err := net.Listen("tcp", inboundAddress)
+	if err != nil {
+		panic(err)
+	}
+	httpListener, fastCGIListener := listener.SplitHTTPAndFastCGI(inboundListener)
 	server := &http.Server{
-		Addr:              fmt.Sprintf("0.0.0.0:%d", config.GetInt("inbound.listen_port")),
+		Addr:              inboundAddress,
 		Handler:           inbound,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		slog.Info("inbound proxy listening", "address", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("inbound HTTP proxy listening", "address", server.Addr)
+		if err := server.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+			panic(err)
+		}
+	}()
+	go func() {
+		slog.Info("inbound FastCGI proxy listening", "address", inboundAddress)
+		if err := fcgi.Serve(fastCGIListener, inbound); err != nil && !errors.Is(err, net.ErrClosed) {
 			panic(err)
 		}
 	}()

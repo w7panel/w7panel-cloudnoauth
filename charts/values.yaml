@@ -2,7 +2,7 @@ sidecar:
   image:
     repository: zpk.w7.cc/public/w7panel-cloudnoauth
     pullPolicy: IfNotPresent
-    tag: v1.0.16
+    tag: v1.0.18
 
   targetHost: api.w7.cc
   virtualIP: 198.18.0.1

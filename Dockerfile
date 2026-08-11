@@ -27,6 +27,6 @@ COPY config.yaml /home/config.yaml
 COPY scripts/iptables-setup.sh /usr/local/bin/iptables-setup
 RUN chmod 0755 /usr/local/bin/iptables-setup
 
-EXPOSE 15080 15081 15443
+EXPOSE 15080 15443
 
 CMD ["/home/w7panel-app-proxy", "server:start", "-f", "/home/config.yaml"]

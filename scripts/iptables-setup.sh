@@ -5,10 +5,7 @@ virtual_api_ip="${API_PROXY_VIRTUAL_IP:-198.18.0.1}"
 outbound_http_port="${PROXY_HTTP_PORT:-15080}"
 outbound_https_port="${PROXY_HTTPS_PORT:-15443}"
 sidecar_runtime_uid="${SIDECAR_RUNTIME_UID:-1337}"
-inbound_target_port="${INBOUND_TARGET_PORT:-8080}"
-inbound_redirect_port="${INBOUND_LISTEN_PORT:-15081}"
 outbound_chain_name="W7PANEL_OUTBOUND"
-inbound_chain_name="W7PANEL_INBOUND"
 
 # 首次启动 Sidecar 时创建出站 NAT 链；链已存在时忽略错误。
 iptables -t nat -N "$outbound_chain_name" 2>/dev/null || true
@@ -30,17 +27,3 @@ iptables -t nat -A "$outbound_chain_name" -p tcp -d "$virtual_api_ip/32" --dport
 	-j REDIRECT --to-ports "$outbound_http_port"
 iptables -t nat -A "$outbound_chain_name" -p tcp -d "$virtual_api_ip/32" --dport 443 \
 	-j REDIRECT --to-ports "$outbound_https_port"
-
-# 首次启动 Sidecar 时创建入站 NAT 链；链已存在时忽略错误。
-iptables -t nat -N "$inbound_chain_name" 2>/dev/null || true
-# 清空旧 Sidecar 进程遗留的入站规则，避免重复添加。
-iptables -t nat -F "$inbound_chain_name"
-
-# 检查进入 Pod 的数据包是否已经经过自定义入站链。
-if ! iptables -t nat -C PREROUTING -j "$inbound_chain_name" 2>/dev/null; then
-	# 将自定义入站链挂到 PREROUTING，在流量交给业务容器前进行处理。
-	iptables -t nat -A PREROUTING -j "$inbound_chain_name"
-fi
-# 将业务容器端口的入站流量重定向到 Sidecar 验签监听端口。
-iptables -t nat -A "$inbound_chain_name" -p tcp --dport "$inbound_target_port" \
-	-j REDIRECT --to-ports "$inbound_redirect_port"

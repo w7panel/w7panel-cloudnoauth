@@ -29,8 +29,3 @@ outbound:
   allowed_host: ${API_PROXY_ALLOWED_HOST-api.w7.cc}
   upstream_host: ${API_PROXY_UPSTREAM_HOST-}
   upstream_ca_file: ${API_PROXY_UPSTREAM_CA_FILE-/etc/ssl/certs/ca-certificates.crt}
-inbound:
-  listen_port: ${INBOUND_LISTEN_PORT-15081}
-  target_scheme: ${INBOUND_TARGET_SCHEME-http}
-  target_host: ${INBOUND_TARGET_HOST-127.0.0.1}
-  target_port: ${INBOUND_TARGET_PORT-8080}

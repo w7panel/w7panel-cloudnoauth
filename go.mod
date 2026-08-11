@@ -7,10 +7,8 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/spf13/viper v1.19.0
 	github.com/we7coreteam/w7-rangine-go/v2 v2.0.11
-	github.com/yookoala/gofast v0.8.0
 	golang.org/x/sync v0.19.0
 	k8s.io/client-go v0.34.1
-	sigs.k8s.io/yaml v1.6.0
 )
 
 require github.com/gin-contrib/sessions v1.0.1 // indirect
@@ -99,7 +97,6 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect
-	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -120,6 +117,7 @@ require (
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
+	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 exclude github.com/mattn/go-sqlite3 v2.0.3+incompatible

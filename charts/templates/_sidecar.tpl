@@ -27,10 +27,6 @@
       value: {{ .Values.sidecar.httpsPort | quote }}
     - name: SIDECAR_RUNTIME_UID
       value: {{ .Values.sidecar.runtimeUID | quote }}
-    - name: INBOUND_LISTEN_PORT
-      value: {{ .Values.sidecar.inbound.listenPort | quote }}
-    - name: INBOUND_TARGET_PORT
-      value: {{ .Values.sidecar.inbound.targetPort | quote }}
 {{- end -}}
 
 {{- define "w7panel-cloudnoauth.container" -}}
@@ -51,9 +47,6 @@
       protocol: TCP
     - name: noauth-https
       containerPort: {{ .Values.sidecar.httpsPort }}
-      protocol: TCP
-    - name: noauth-inbound
-      containerPort: {{ .Values.sidecar.inbound.listenPort }}
       protocol: TCP
   env:
     - name: SERVER_PORT
@@ -82,14 +75,6 @@
         fieldRef:
           fieldPath: metadata.namespace
       {{- end }}
-    - name: INBOUND_LISTEN_PORT
-      value: {{ .Values.sidecar.inbound.listenPort | quote }}
-    - name: INBOUND_TARGET_SCHEME
-      value: {{ .Values.sidecar.inbound.targetScheme | quote }}
-    - name: INBOUND_TARGET_HOST
-      value: {{ .Values.sidecar.inbound.targetHost | quote }}
-    - name: INBOUND_TARGET_PORT
-      value: {{ .Values.sidecar.inbound.targetPort | quote }}
     {{- range $name, $value := .Values.sidecar.env }}
     - name: {{ $name }}
       value: {{ $value | quote }}

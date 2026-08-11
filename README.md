@@ -54,7 +54,7 @@ AppGroup；Pod 没有这些元数据时，沿 Pod -> ReplicaSet -> Deployment �
 
 1. InitContainer 以 root 和 `NET_ADMIN` 执行 [scripts/iptables-setup.sh](scripts/iptables-setup.sh)。
 2. 创建并刷新 `W7PANEL_OUTBOUND` 和 `W7PANEL_INBOUND` NAT 链。
-3. 解析 `api.w7.cc` 的 IPv4 地址，并写入出站重定向规则。
+3. 将 ZPK 为 `api.w7.cc` 注入的固定虚拟 IP 写入出站重定向规则。
 4. 写入业务端口的入站重定向规则后退出。
 5. Sidecar 主容器直接以 `SIDECAR_RUNTIME_UID`（默认 `1337`）启动 Go 进程。
 
@@ -80,9 +80,27 @@ W7PANEL_OUTBOUND
         +-- 443 -> REDIRECT 到 15443
 ```
 
-规则只匹配启动时解析到的 `api.w7.cc` IPv4 地址。Sidecar 自身使用 UID 1337，
+规则只匹配 `sidecar.virtualIP`（默认 `198.18.0.1`）。Sidecar 自身使用 UID 1337，
 `--uid-owner 1337 -j RETURN` 会让它发往上游的连接直接放行，避免代理请求再次被
 OUTPUT 链劫持形成循环。
+
+ZPK 通过 `w7panel-cloudnoauth.hostAliases` 把 `api.w7.cc` 映射到虚拟 IP。Sidecar
+Chart 会在当前业务 Release 的命名空间创建一个独立的 ExternalName Service。Sidecar
+访问真实上游时只在 TCP 拨号阶段改连这个 Service，由 CoreDNS 解析 `api.w7.cc` 的
+真实地址。请求的 HTTP Host 和 TLS SNI 仍保持 `api.w7.cc`，同时不会再次连接虚拟 IP。
+
+生成的资源类似：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: <release>-w7panel-cloudnoauth-upstream
+  namespace: <业务 release namespace>
+spec:
+  type: ExternalName
+  externalName: api.w7.cc
+```
 
 ### 2. HTTP 出站代理
 
@@ -161,9 +179,9 @@ w7panel-zpk 自动将本 Chart 作为本地依赖一起打包，并在生成业�
 
 ```yaml
 metadata:
-  annotations:
-    {{- include "w7panel-cloudnoauth.podAnnotations" . | nindent 4 }}
 spec:
+  hostAliases:
+    {{- include "w7panel-cloudnoauth.hostAliases" . | nindent 4 }}
   initContainers:
     {{- include "w7panel-cloudnoauth.initContainer" . | nindent 4 }}
   containers:
@@ -180,6 +198,8 @@ Chart annotations 声明模板入口；如 sidecar 需要业务容器端口，�
 可选的 `w7.cc/sidecar-resources-template` 可输出一次性的配套 Kubernetes 资源；本制品用它
 生成读取当前 Pod、ReplicaSet、Deployment 和 AppGroup 所需的 Role/RoleBinding，其他
 sidecar 可用同一出口生成 PVC、Secret、ConfigMap、Service 等资源。
+`w7.cc/sidecar-host-aliases-template` 输出需要合并到目标 PodSpec 的 `hostAliases`；
+ZPK 注入器应保留业务已有条目，并按 IP 和 hostname 去重。
 
 Job 使用 `w7panel-cloudnoauth.jobContainer`，它把长期运行的代理声明为
 `restartPolicy: Always` 的 Kubernetes 原生 sidecar initContainer；iptables 仍由更早执行且
@@ -196,7 +216,10 @@ Sidecar 的运行时默认值随制品一起发布在 [charts/values.yaml](chart
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `sidecar.image.repository` | `zpk.w7.cc/public/w7panel-cloudnoauth` | Sidecar 镜像仓库 |
-| `sidecar.image.tag` | `v1.0.14` | Sidecar 镜像版本 |
+| `sidecar.image.tag` | `v1.0.16` | Sidecar 镜像版本 |
+| `sidecar.virtualIP` | `198.18.0.1` | 仅在当前 Pod 内用于接管 `api.w7.cc` 的虚拟 IPv4 |
+| `sidecar.upstream.serviceName` | 自动使用 `<release>-w7panel-cloudnoauth-upstream` | 当前业务 Release 内的 ExternalName Service 名称 |
+| `sidecar.upstream.caFile` | `/etc/ssl/certs/ca-certificates.crt` | 验证真实上游 TLS 的 CA bundle |
 | `sidecar.env` / `sidecar.extraEnv` | 空 | 必要时覆盖默认运行配置 |
 
 ## 证书要求
@@ -290,6 +313,8 @@ kubectl exec <pod> -c w7panel-cloudnoauth -- wget -qO- http://127.0.0.1:15080/ap
 kubectl exec <pod> -c w7panel-cloudnoauth -- wget -S -O- http://127.0.0.1:15081/业务实际路径
 ```
 
-如果出站未被接管，首先检查 Sidecar 启动日志中的 DNS 解析错误，以及业务请求的目标
-是否确实是 `api.w7.cc`。如果入站返回 `401`，检查请求体中的 `appid`、`timestamp`、
+如果出站未被接管，先确认 `getent hosts api.w7.cc` 返回 `sidecar.virtualIP`，再检查
+`W7PANEL_OUTBOUND` 是否包含该虚拟 IP 的 80/443 规则。上游连接失败时检查
+`API_PROXY_UPSTREAM_HOST` 指向的 ExternalName Service 是否存在并能由 CoreDNS 解析，以及 Sidecar 日志中的
+上游 CA 错误。如果入站返回 `401`，检查请求体中的 `appid`、`timestamp`、
 `nonce`、`sign` 是否使用对应 AppGroup 的密钥生成。

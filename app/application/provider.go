@@ -66,11 +66,16 @@ func (provider *Provider) RegisterHttpRoutes(httpServer *http_server.Server) {
 		}
 	}()
 
-	outbound := controller.NewOutbound(
+	outbound, err := controller.NewOutboundWithUpstream(
 		credentialLogic,
 		config.GetString("outbound.scheme"),
 		config.GetString("outbound.allowed_host"),
+		config.GetString("outbound.upstream_host"),
+		config.GetString("outbound.upstream_ca_file"),
 	)
+	if err != nil {
+		panic(err)
+	}
 	sidecar := controller.NewSidecar(credentialLogic)
 	httpServer.RegisterRouters(func(engine *gin.Engine) {
 		api := engine.Group("/api")

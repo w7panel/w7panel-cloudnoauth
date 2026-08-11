@@ -27,6 +27,8 @@ panel:
 outbound:
   scheme: ${API_PROXY_SCHEME-https}
   allowed_host: ${API_PROXY_ALLOWED_HOST-api.w7.cc}
+  upstream_host: ${API_PROXY_UPSTREAM_HOST-}
+  upstream_ca_file: ${API_PROXY_UPSTREAM_CA_FILE-/etc/ssl/certs/ca-certificates.crt}
 inbound:
   listen_port: ${INBOUND_LISTEN_PORT-15081}
   target_scheme: ${INBOUND_TARGET_SCHEME-http}

@@ -15,6 +15,14 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "w7panel-cloudnoauth.upstreamServiceName" -}}
+{{- default (printf "%s-upstream" (include "w7panel-cloudnoauth.fullname" .) | trunc 63 | trimSuffix "-") .Values.sidecar.upstream.serviceName -}}
+{{- end -}}
+
+{{- define "w7panel-cloudnoauth.upstreamServiceHost" -}}
+{{- printf "%s.%s.svc.cluster.local" (include "w7panel-cloudnoauth.upstreamServiceName" .) .Release.Namespace -}}
+{{- end -}}
+
 {{- define "w7panel-cloudnoauth.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

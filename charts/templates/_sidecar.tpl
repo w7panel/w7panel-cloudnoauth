@@ -1,5 +1,7 @@
-{{- define "w7panel-cloudnoauth.podAnnotations" -}}
-w7.cc/inject-root-ca: "true"
+{{- define "w7panel-cloudnoauth.hostAliases" -}}
+- ip: {{ .Values.sidecar.virtualIP | quote }}
+  hostnames:
+    - {{ .Values.sidecar.targetHost | quote }}
 {{- end -}}
 
 {{- define "w7panel-cloudnoauth.initContainer" -}}
@@ -17,8 +19,8 @@ w7.cc/inject-root-ca: "true"
       add: ["NET_ADMIN"]
       drop: ["ALL"]
   env:
-    - name: API_PROXY_ALLOWED_HOST
-      value: {{ .Values.sidecar.targetHost | quote }}
+    - name: API_PROXY_VIRTUAL_IP
+      value: {{ .Values.sidecar.virtualIP | quote }}
     - name: PROXY_HTTP_PORT
       value: {{ .Values.sidecar.httpPort | quote }}
     - name: PROXY_HTTPS_PORT
@@ -54,6 +56,20 @@ w7.cc/inject-root-ca: "true"
       containerPort: {{ .Values.sidecar.inbound.listenPort }}
       protocol: TCP
   env:
+    - name: SERVER_PORT
+      value: {{ .Values.sidecar.httpPort | quote }}
+    - name: SERVER_TLS_PORT
+      value: {{ .Values.sidecar.httpsPort | quote }}
+    - name: SERVER_TLS_CERT_FILE
+      value: {{ printf "%s/tls.crt" (.Values.sidecar.tls.mountPath | trimSuffix "/") | quote }}
+    - name: SERVER_TLS_KEY_FILE
+      value: {{ printf "%s/tls.key" (.Values.sidecar.tls.mountPath | trimSuffix "/") | quote }}
+    - name: API_PROXY_ALLOWED_HOST
+      value: {{ .Values.sidecar.targetHost | quote }}
+    - name: API_PROXY_UPSTREAM_HOST
+      value: {{ include "w7panel-cloudnoauth.upstreamServiceHost" . | quote }}
+    - name: API_PROXY_UPSTREAM_CA_FILE
+      value: {{ .Values.sidecar.upstream.caFile | quote }}
     - name: POD_NAME
       valueFrom:
         fieldRef:
@@ -66,6 +82,12 @@ w7.cc/inject-root-ca: "true"
         fieldRef:
           fieldPath: metadata.namespace
       {{- end }}
+    - name: INBOUND_LISTEN_PORT
+      value: {{ .Values.sidecar.inbound.listenPort | quote }}
+    - name: INBOUND_TARGET_SCHEME
+      value: {{ .Values.sidecar.inbound.targetScheme | quote }}
+    - name: INBOUND_TARGET_HOST
+      value: {{ .Values.sidecar.inbound.targetHost | quote }}
     - name: INBOUND_TARGET_PORT
       value: {{ .Values.sidecar.inbound.targetPort | quote }}
     {{- range $name, $value := .Values.sidecar.env }}
@@ -117,7 +139,18 @@ w7.cc/inject-root-ca: "true"
       csi.cert-manager.io/fs-group: {{ .Values.sidecar.runtimeUID | quote }}
 {{- end -}}
 
-{{- define "w7panel-cloudnoauth.rbac" -}}
+{{- define "w7panel-cloudnoauth.resources" -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "w7panel-cloudnoauth.upstreamServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ .Values.sidecar.targetHost | quote }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

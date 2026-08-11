@@ -2,12 +2,16 @@ sidecar:
   image:
     repository: zpk.w7.cc/public/w7panel-cloudnoauth
     pullPolicy: IfNotPresent
-    tag: v1.0.14
+    tag: v1.0.16
 
   targetHost: api.w7.cc
+  virtualIP: 198.18.0.1
   runtimeUID: 1337
   httpPort: 15080
   httpsPort: 15443
+  upstream:
+    serviceName: ""
+    caFile: /etc/ssl/certs/ca-certificates.crt
   inbound:
     listenPort: 15081
     targetScheme: http

@@ -2,12 +2,17 @@ package controller
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +29,7 @@ const (
 	outboundMaxIdleConns        = 200
 	outboundMaxIdleConnsPerHost = 100
 	outboundMaxConnsPerHost     = 200
+	outboundDialTimeout         = 30 * time.Second
 )
 
 func newOutboundTransport() *http.Transport {
@@ -32,6 +38,55 @@ func newOutboundTransport() *http.Transport {
 	transport.MaxIdleConnsPerHost = outboundMaxIdleConnsPerHost
 	transport.MaxConnsPerHost = outboundMaxConnsPerHost
 	return transport
+}
+
+func newUpstreamOutboundTransport(allowedHosts []string, upstreamHost, upstreamCAFile string) (*http.Transport, error) {
+	upstreamHost = strings.TrimSuffix(strings.TrimSpace(upstreamHost), ".")
+	if upstreamHost == "" {
+		return nil, fmt.Errorf("upstream host is required")
+	}
+	if strings.ContainsAny(upstreamHost, "/:") {
+		return nil, fmt.Errorf("upstream host %q must be a DNS name without scheme or port", upstreamHost)
+	}
+
+	transport := newOutboundTransport()
+	transport.Proxy = nil
+
+	if strings.TrimSpace(upstreamCAFile) != "" {
+		certificateData, err := os.ReadFile(upstreamCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read upstream CA file: %w", err)
+		}
+		certificatePool := x509.NewCertPool()
+		if !certificatePool.AppendCertsFromPEM(certificateData) {
+			return nil, fmt.Errorf("upstream CA file %q contains no certificates", upstreamCAFile)
+		}
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    certificatePool,
+		}
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   outboundDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		upstreamAddress, replaced := replaceUpstreamDialAddress(address, allowedHosts, upstreamHost)
+		if !replaced {
+			return dialer.DialContext(ctx, network, address)
+		}
+		return dialer.DialContext(ctx, network, upstreamAddress)
+	}
+	return transport, nil
+}
+
+func replaceUpstreamDialAddress(address string, allowedHosts []string, upstreamHost string) (string, bool) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || !helper.IsAllowedHost(host, allowedHosts) {
+		return address, false
+	}
+	return net.JoinHostPort(upstreamHost, port), true
 }
 
 type Outbound struct {
@@ -43,11 +98,24 @@ type Outbound struct {
 }
 
 func NewOutbound(credentialLogic *logic.Credential, scheme string, allowedHost string) Outbound {
+	return newOutbound(credentialLogic, scheme, allowedHost, newOutboundTransport())
+}
+
+func NewOutboundWithUpstream(credentialLogic *logic.Credential, scheme, allowedHost, upstreamHost, upstreamCAFile string) (Outbound, error) {
+	allowedHosts := helper.ParseAllowedHosts(allowedHost, defaultAllowedOutboundHost)
+	transport, err := newUpstreamOutboundTransport(allowedHosts, upstreamHost, upstreamCAFile)
+	if err != nil {
+		return Outbound{}, err
+	}
+	return newOutbound(credentialLogic, scheme, allowedHost, transport), nil
+}
+
+func newOutbound(credentialLogic *logic.Credential, scheme string, allowedHost string, transport http.RoundTripper) Outbound {
 	if strings.TrimSpace(scheme) == "" {
 		scheme = "https"
 	}
 	proxy := &httputil.ReverseProxy{
-		Transport: newOutboundTransport(),
+		Transport: transport,
 	}
 	proxy.Director = func(req *http.Request) {
 		originalHost := req.Host

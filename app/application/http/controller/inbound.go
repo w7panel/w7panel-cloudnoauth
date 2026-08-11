@@ -38,6 +38,7 @@ func NewInbound(credentialLogic *logic.Credential, targetScheme, targetHost stri
 }
 
 func (h *Inbound) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	slog.Info("inbound http request", "path", req.URL.Path)
 	err := verifyAndStripSignedBody(req, func() (k8s.AppCredential, error) {
 		return h.CredentialLogic.Resolve(req.Context())
 	})
@@ -63,6 +64,7 @@ func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.A
 			return err
 		}
 		encoded, changed, err := verifyAndStripSignature(data, resolveCredential)
+		slog.Info("inbound signature rejected", "path", req.URL.Path, "content-type", contentType, "encoded", encoded, "changed", changed)
 		if err != nil {
 			return err
 		}
@@ -83,6 +85,7 @@ func verifyAndStripSignedBody(req *http.Request, resolveCredential func() (k8s.A
 		}
 	}
 	stripped, changed, err := verifyAndStripSignature(data, resolveCredential)
+	slog.Info("inbound signature rejected", "path", req.URL.Path, "content-type", contentType, "stripped", stripped, "changed", changed)
 	if err != nil {
 		return err
 	}

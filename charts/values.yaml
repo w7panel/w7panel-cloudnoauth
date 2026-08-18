@@ -21,6 +21,7 @@ sidecar:
     volumeName: w7panel-cloudnoauth-tls
     mountPath: /var/run/w7panel-cloudnoauth
 
+  # The hosting platform always runs the workload as the namespace default account.
   serviceAccountName: default
   panelNamespace: ""
 

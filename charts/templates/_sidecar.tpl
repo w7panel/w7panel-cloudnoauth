@@ -135,6 +135,16 @@ metadata:
 spec:
   type: ExternalName
   externalName: {{ .Values.sidecar.targetHost | quote }}
+{{- if ne .Values.sidecar.serviceAccountName "default" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.sidecar.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

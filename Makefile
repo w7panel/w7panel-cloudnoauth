@@ -10,6 +10,8 @@ HELM_CHART_VERSION ?= $(shell awk '$$1=="version:" {print $$2; exit}' $(HELM_CHA
 IMAGE_REPOSITORY ?= $(HELM_IMAGE_REPOSITORY)
 IMAGE_TAG ?= $(HELM_IMAGE_TAG)
 IMAGE ?= $(IMAGE_REPOSITORY):$(IMAGE_TAG)
+HELM_PACKAGE_IMAGE_REPOSITORY ?= $(IMAGE_REPOSITORY)
+HELM_PACKAGE_IMAGE_TAG ?= $(IMAGE_TAG)
 HELM_APP_VERSION ?= $(IMAGE_TAG)
 BETA_SUFFIX ?=
 BETA_IMAGE_TAG ?= $(IMAGE_TAG)-$(BETA_SUFFIX)
@@ -29,4 +31,12 @@ publish: build chart-package
 
 chart-package:
 	mkdir -p $(HELM_PACKAGE_DIR)
-	helm package $(HELM_CHART_DIR) --version $(HELM_CHART_VERSION) --app-version $(HELM_APP_VERSION) --destination $(HELM_PACKAGE_DIR)
+	@stage_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$stage_dir"' EXIT; \
+	cp -R $(HELM_CHART_DIR) "$$stage_dir/chart"; \
+	sed -i.bak \
+		-e '/^sidecar:/,/^[^[:space:]]/ s|^\([[:space:]]*repository:[[:space:]]*\).*$$|\1$(HELM_PACKAGE_IMAGE_REPOSITORY)|' \
+		-e '/^sidecar:/,/^[^[:space:]]/ s|^\([[:space:]]*tag:[[:space:]]*\).*$$|\1$(HELM_PACKAGE_IMAGE_TAG)|' \
+		"$$stage_dir/chart/values.yaml"; \
+	rm "$$stage_dir/chart/values.yaml.bak"; \
+	helm package "$$stage_dir/chart" --version $(HELM_CHART_VERSION) --app-version $(HELM_APP_VERSION) --destination $(HELM_PACKAGE_DIR)

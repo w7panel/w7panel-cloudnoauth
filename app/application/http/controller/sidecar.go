@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -73,8 +74,9 @@ func (c Sidecar) VerifySignature(ctx *gin.Context) {
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{
-		"valid": true,
-		"appid": credential.AppID,
+		"valid":    true,
+		"appid":    credential.AppID,
+		"appgroup": credential.AppGroup,
 	})
 }
 
@@ -83,7 +85,17 @@ func parseSignedRequest(req *http.Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.Contains(req.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+
+	contentType := req.Header.Get("Content-Type")
+	normalizedContentType := strings.ToLower(strings.TrimSpace(contentType))
+	mediaType, _, mediaTypeErr := mime.ParseMediaType(contentType)
+	if mediaTypeErr == nil && mediaType == "multipart/form-data" {
+		return helper.ParseMultipartFormBody(body, contentType)
+	}
+	if mediaTypeErr != nil && strings.HasPrefix(normalizedContentType, "multipart/form-data") {
+		return nil, mediaTypeErr
+	}
+	if strings.Contains(normalizedContentType, "application/x-www-form-urlencoded") {
 		return helper.ParsePHPFormBody(body)
 	}
 

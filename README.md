@@ -105,7 +105,7 @@ spec:
 
 1. 校验请求 Host 是否在 `outbound.allowed_host` 中，默认只允许 `api.w7.cc`。
 2. 对非 `/` 路径读取请求体。
-3. 对 JSON 或 `application/x-www-form-urlencoded` 请求追加签名字段：
+3. 对 JSON、`application/x-www-form-urlencoded` 或 `multipart/form-data` 请求追加签名字段：
    `appid`、`timestamp`、`nonce`、`sign`。
 4. 如果请求体已经包含 `sign`，认为调用方已经签名，保持原请求体不重复签名。
 5. 通过反向代理转发到 `https://api.w7.cc`（协议可由 `outbound.scheme` 配置）。
@@ -121,8 +121,8 @@ HTTPS 流量会被重定向到 Sidecar 的 `15443`。Sidecar 使用挂载的 `ap
 
 ## 签名验证 API
 
-业务应用收到平台请求后，可以把原始 JSON 或 `application/x-www-form-urlencoded` 请求体
-提交到 Pod 内的 Sidecar：
+业务应用收到平台请求后，可以把原始 JSON、`application/x-www-form-urlencoded` 或
+`multipart/form-data` 请求体提交到 Pod 内的 Sidecar：
 
 ```text
 POST http://127.0.0.1:15080/api/signature/verify
@@ -150,7 +150,7 @@ AppGroup 凭据暂时无法读取返回 HTTP `503`。该接口只验证签名，
 | --- | --- |
 | `GET /api/live` | Kubernetes liveness/readiness 探针 |
 | `GET /api/app/info` | 根据 Pod 的 AppGroup 返回 `appid` 和 `appsecret` |
-| `POST /api/signature/verify` | 验证 JSON 或表单请求体中的平台签名 |
+| `POST /api/signature/verify` | 验证 JSON、URL 编码表单或 multipart 表单请求体中的平台签名 |
 
 其他请求由 `Outbound` controller 处理并转发到 `api.w7.cc`。
 

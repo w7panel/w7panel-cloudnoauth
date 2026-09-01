@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -183,8 +184,6 @@ func (c Outbound) Forward(ctx *gin.Context) {
 			"path", ctx.Request.URL.Path,
 			"error", err,
 		)
-		c.JsonResponseWithServerError(ctx, err)
-		return
 	}
 
 	slog.Info("outbound forwarding request",
@@ -208,11 +207,63 @@ func appendSignedBody(req *http.Request, resolveCredential func() (k8s.AppCreden
 	_ = req.Body.Close()
 
 	contentType := req.Header.Get("Content-Type")
-	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+	normalizedContentType := strings.ToLower(strings.TrimSpace(contentType))
+	mediaType, _, mediaTypeErr := mime.ParseMediaType(contentType)
+	if mediaTypeErr == nil && mediaType == "multipart/form-data" {
+		return appendSignedMultipartFormBody(req, body, contentType, resolveCredential)
+	}
+	if mediaTypeErr != nil && strings.HasPrefix(normalizedContentType, "multipart/form-data") {
+		return mediaTypeErr
+	}
+	if strings.Contains(normalizedContentType, "application/x-www-form-urlencoded") {
 		return appendSignedFormBody(req, body, contentType, resolveCredential)
 	}
 
 	return appendSignedJSONBody(req, body, contentType, resolveCredential)
+}
+
+func appendSignedMultipartFormBody(req *http.Request, body []byte, contentType string, resolveCredential func() (k8s.AppCredential, error)) error {
+	data, err := helper.ParseMultipartFormBody(body, contentType)
+	if err != nil {
+		return err
+	}
+	if _, exists := data["sign"]; exists {
+		resetRequestBody(req, contentType, body)
+		return nil
+	}
+
+	credential, err := resolveCredential()
+	if err != nil {
+		if k8s.IsSkippableCredentialError(err) {
+			resetRequestBody(req, contentType, body)
+			return nil
+		}
+		return err
+	}
+
+	nonce, err := helper.RandomString(16)
+	if err != nil {
+		return err
+	}
+
+	data["appid"] = credential.AppID
+	data["timestamp"] = time.Now().Unix()
+	data["nonce"] = nonce
+	signature := helper.BuildSign(data, credential.AppSecret)
+	data["sign"] = signature
+
+	fields := map[string]string{
+		"appid":     credential.AppID,
+		"timestamp": fmt.Sprint(data["timestamp"]),
+		"nonce":     nonce,
+		"sign":      signature,
+	}
+	encodedBody, err := helper.AppendMultipartFormFields(body, contentType, fields)
+	if err != nil {
+		return err
+	}
+	resetRequestBody(req, contentType, encodedBody)
+	return nil
 }
 
 func appendSignedFormBody(req *http.Request, body []byte, contentType string, resolveCredential func() (k8s.AppCredential, error)) error {

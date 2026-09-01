@@ -1,11 +1,15 @@
 package helper
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/url"
 	"sort"
 	"strings"
@@ -40,6 +44,111 @@ func ParsePHPFormBody(body []byte) (map[string]any, error) {
 	}
 
 	return data, nil
+}
+
+// ParseMultipartFormBody parses text fields from a multipart/form-data body.
+// File fields are ignored because their contents cannot participate in the
+// signed form payload.
+func ParseMultipartFormBody(body []byte, contentType string) (map[string]any, error) {
+	boundary, err := multipartBoundary(contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	data := map[string]any{}
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// File contents are not form values and cannot participate in the
+		// signature payload. Ignore them while still advancing through the part.
+		name := part.FormName()
+		if name == "" || part.FileName() != "" {
+			if _, err := io.Copy(io.Discard, part); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		value, err := io.ReadAll(part)
+		if err != nil {
+			return nil, err
+		}
+		insertPHPFormValue(data, parsePHPFormKey(name), string(value))
+	}
+
+	return data, nil
+}
+
+// AppendMultipartFormFields adds text fields to a multipart/form-data body
+// while preserving all existing parts, including file contents.
+func AppendMultipartFormFields(body []byte, contentType string, fields map[string]string) ([]byte, error) {
+	boundary, err := multipartBoundary(contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	var encoded bytes.Buffer
+	writer := multipart.NewWriter(&encoded)
+	if err := writer.SetBoundary(boundary); err != nil {
+		return nil, err
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		// Use the raw reader here so existing part headers and bytes (including
+		// quoted-printable file contents) are forwarded without re-encoding.
+		part, err := reader.NextRawPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		destination, err := writer.CreatePart(part.Header)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(destination, part); err != nil {
+			return nil, err
+		}
+	}
+
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := writer.WriteField(key, fields[key]); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
+}
+
+func multipartBoundary(contentType string) (string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", err
+	}
+	if mediaType != "multipart/form-data" {
+		return "", fmt.Errorf("content type must be multipart/form-data")
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return "", fmt.Errorf("multipart form content type must contain a boundary")
+	}
+	return boundary, nil
 }
 
 func BuildPHPQuery(data map[string]any) string {

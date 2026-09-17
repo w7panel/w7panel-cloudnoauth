@@ -53,8 +53,9 @@ AppGroup；Pod 没有这些元数据时，沿 Pod -> ReplicaSet -> Deployment �
 3. 将 ZPK 为 `api.w7.cc` 注入的固定虚拟 IP 写入出站重定向规则。
 4. 入口脚本通过 `su-exec` 降权，以 `SIDECAR_RUNTIME_UID`（默认 `1337`）启动 Go 进程。
 
-Sidecar 容器需要以 root 和 `NET_ADMIN` capability 启动以配置 Pod 网络命名空间；iptables
-初始化完成后，Go 进程以普通用户 `w7proxy`（UID 1337）运行。
+Sidecar 容器需要以 root 和 `NET_ADMIN` capability 启动以配置 Pod 网络命名空间，并使用
+`SETUID`、`SETGID` capability 完成降权；iptables 初始化完成后，Go 进程以普通用户
+`w7proxy`（UID 1337）运行。
 
 ## 出站流程
 

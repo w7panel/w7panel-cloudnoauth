@@ -15,7 +15,7 @@
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: false
     capabilities:
-      add: ["NET_ADMIN"]
+      add: ["NET_ADMIN", "SETGID", "SETUID"]
       drop: ["ALL"]
   ports:
     - name: noauth-http

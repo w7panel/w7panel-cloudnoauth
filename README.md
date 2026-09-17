@@ -30,14 +30,12 @@ https://api.w7.cc/...
 |    - 监听 8080                                          |
 |    - 请求 https://api.w7.cc                             |
 |                                                         |
-|  w7panel-cloudnoauth-iptables InitContainer            |
-|    - root + NET_ADMIN 初始化 iptables                  |
-|                                                         |
 |  w7panel-cloudnoauth Sidecar                            |
+|    - root + NET_ADMIN 初始化 iptables                  |
 |    - 15080: 出站 HTTP                                   |
 |    - 15443: 出站 HTTPS                                  |
 |    - /api/signature/verify: 本地签名验证                |
-|    - 直接以 UID 1337 运行 Go 进程                       |
+|    - 初始化后以 UID 1337 运行 Go 进程                   |
 |                                                         |
 |  共享网络命名空间和 TLS 证书卷                          |
 +---------------------------------------------------------+
@@ -50,13 +48,13 @@ AppGroup；Pod 没有这些元数据时，沿 Pod -> ReplicaSet -> Deployment �
 
 ## 启动流程
 
-1. InitContainer 以 root 和 `NET_ADMIN` 执行 [scripts/iptables-setup.sh](scripts/iptables-setup.sh)。
+1. Sidecar 容器以 root 和 `NET_ADMIN` 执行 [scripts/iptables-setup.sh](scripts/iptables-setup.sh)。
 2. 创建并刷新 `W7PANEL_OUTBOUND` NAT 链。
 3. 将 ZPK 为 `api.w7.cc` 注入的固定虚拟 IP 写入出站重定向规则。
-4. Sidecar 主容器直接以 `SIDECAR_RUNTIME_UID`（默认 `1337`）启动 Go 进程。
+4. 入口脚本通过 `su-exec` 降权，以 `SIDECAR_RUNTIME_UID`（默认 `1337`）启动 Go 进程。
 
-只有 InitContainer 需要 `NET_ADMIN`。Sidecar 主容器不再需要 root、`SETUID`、`SETGID`
-或 `NET_ADMIN` capability。
+Sidecar 容器需要以 root 和 `NET_ADMIN` capability 启动以配置 Pod 网络命名空间；iptables
+初始化完成后，Go 进程以普通用户 `w7proxy`（UID 1337）运行。
 
 ## 出站流程
 
@@ -165,8 +163,6 @@ metadata:
 spec:
   hostAliases:
     {{- include "w7panel-cloudnoauth.hostAliases" . | nindent 4 }}
-  initContainers:
-    {{- include "w7panel-cloudnoauth.initContainer" . | nindent 4 }}
   containers:
     - name: application
       # 业务容器，默认监听 8080
@@ -183,8 +179,8 @@ sidecar 可用同一出口生成 PVC、Secret、ConfigMap、Service 等资源。
 ZPK 注入器应保留业务已有条目，并按 IP 和 hostname 去重。
 
 Job 使用 `w7panel-cloudnoauth.jobContainer`，它把长期运行的代理声明为
-`restartPolicy: Always` 的 Kubernetes 原生 sidecar initContainer；iptables 仍由更早执行且
-会退出的 `w7panel-cloudnoauth.initContainer` 初始化。因此业务 Job 结束后不会被代理阻塞。
+`restartPolicy: Always` 的 Kubernetes 原生 sidecar initContainer；该 Sidecar 在自身启动时
+初始化 iptables，再降权运行 Go 进程。因此业务 Job 结束后不会被代理阻塞。
 
 `w7.cc/inject-root-ca: "true"` 继续复用 w7panel-server 既有根 CA 注入逻辑。
 `inject-sidecar` 注解和 server 动态拉取 sidecar 制品的逻辑已不再使用。

@@ -4,11 +4,10 @@
     - {{ .Values.sidecar.targetHost | quote }}
 {{- end -}}
 
-{{- define "w7panel-cloudnoauth.initContainer" -}}
-- name: w7panel-cloudnoauth-iptables
+{{- define "w7panel-cloudnoauth.container" -}}
+- name: w7panel-cloudnoauth
   image: "{{ .Values.sidecar.image.repository }}:{{ .Values.sidecar.image.tag | default .Chart.AppVersion }}"
   imagePullPolicy: {{ .Values.sidecar.image.pullPolicy }}
-  command: ["/usr/local/bin/iptables-setup"]
   securityContext:
     runAsUser: 0
     runAsGroup: 0
@@ -18,6 +17,13 @@
     capabilities:
       add: ["NET_ADMIN"]
       drop: ["ALL"]
+  ports:
+    - name: noauth-http
+      containerPort: {{ .Values.sidecar.httpPort }}
+      protocol: TCP
+    - name: noauth-https
+      containerPort: {{ .Values.sidecar.httpsPort }}
+      protocol: TCP
   env:
     - name: API_PROXY_VIRTUAL_IP
       value: {{ .Values.sidecar.virtualIP | quote }}
@@ -27,28 +33,6 @@
       value: {{ .Values.sidecar.httpsPort | quote }}
     - name: SIDECAR_RUNTIME_UID
       value: {{ .Values.sidecar.runtimeUID | quote }}
-{{- end -}}
-
-{{- define "w7panel-cloudnoauth.container" -}}
-- name: w7panel-cloudnoauth
-  image: "{{ .Values.sidecar.image.repository }}:{{ .Values.sidecar.image.tag | default .Chart.AppVersion }}"
-  imagePullPolicy: {{ .Values.sidecar.image.pullPolicy }}
-  securityContext:
-    runAsUser: {{ .Values.sidecar.runtimeUID }}
-    runAsGroup: {{ .Values.sidecar.runtimeUID }}
-    runAsNonRoot: true
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop: ["ALL"]
-  ports:
-    - name: noauth-http
-      containerPort: {{ .Values.sidecar.httpPort }}
-      protocol: TCP
-    - name: noauth-https
-      containerPort: {{ .Values.sidecar.httpsPort }}
-      protocol: TCP
-  env:
     - name: SERVER_PORT
       value: {{ .Values.sidecar.httpPort | quote }}
     - name: SERVER_TLS_PORT

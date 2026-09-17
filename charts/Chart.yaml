@@ -10,7 +10,6 @@ appVersion: "v1.0.14"
 annotations:
   w7.cc/manifest-type: "sidecar"
   w7.cc/sidecar-host-aliases-template: "w7panel-cloudnoauth.hostAliases"
-  w7.cc/sidecar-init-template: "w7panel-cloudnoauth.initContainer"
   w7.cc/sidecar-container-template: "w7panel-cloudnoauth.container"
   w7.cc/sidecar-job-container-template: "w7panel-cloudnoauth.jobContainer"
   w7.cc/sidecar-volumes-template: "w7panel-cloudnoauth.volumes"

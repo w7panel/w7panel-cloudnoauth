@@ -143,7 +143,7 @@ rules:
     resources: ["replicasets", "deployments"]
     verbs: ["get"]
   - apiGroups: ["w7panel.w7.com"]
-    resources: ["appgroups"]
+    resources: ["sites"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

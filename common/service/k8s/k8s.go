@@ -19,6 +19,7 @@ import (
 var (
 	ErrAppGroupParentNotFound = errors.New("appgroup parent not found")
 	ErrAppGroupNotFound       = errors.New("appgroup not found")
+	ErrSiteNotFound           = errors.New("site not found")
 	ErrAppCredentialNotFound  = errors.New("app credential not found")
 )
 
@@ -31,6 +32,7 @@ const (
 func IsSkippableCredentialError(err error) bool {
 	return errors.Is(err, ErrAppGroupParentNotFound) ||
 		errors.Is(err, ErrAppGroupNotFound) ||
+		errors.Is(err, ErrSiteNotFound) ||
 		errors.Is(err, ErrAppCredentialNotFound)
 }
 
@@ -78,6 +80,14 @@ type appGroup struct {
 			AppSecret string `json:"appSecret"`
 		} `json:"appCredentials"`
 	} `json:"spec"`
+}
+
+type site struct {
+	Metadata k8sObjectMeta `json:"metadata"`
+	Status   struct {
+		AppID     string `json:"appId"`
+		AppSecret string `json:"appSecret"`
+	} `json:"status"`
 }
 
 func NewK8sService(k8sConfig string) (*K8sService, error) {
@@ -135,9 +145,9 @@ func tuneK8sTransport(rt http.RoundTripper) http.RoundTripper {
 }
 
 // ResolveAppCredentialForPod resolves the AppGroup owning the current Pod and
-// returns that AppGroup's application credential. The Pod may carry the owner
-// group metadata itself; otherwise the lookup follows Pod -> ReplicaSet ->
-// Deployment and reads it from the Deployment.
+// returns the application credential from the corresponding Site's status.
+// The Pod may carry the owner group metadata itself; otherwise the lookup
+// follows Pod -> ReplicaSet -> Deployment and reads it from the Deployment.
 func (s *K8sService) ResolveAppCredentialForPod(ctx context.Context, namespace, podName string) (AppCredential, error) {
 	namespace = resolveNamespace(namespace)
 	podName = strings.TrimSpace(podName)
@@ -153,15 +163,15 @@ func (s *K8sService) ResolveAppCredentialForPod(ctx context.Context, namespace, 
 	if err != nil {
 		return AppCredential{}, err
 	}
-	group, err := s.QueryAppGroup(ctx, namespace, groupName)
+	site, err := s.QuerySite(ctx, namespace, groupName)
 	if err != nil {
-		return AppCredential{}, fmt.Errorf("%w: %s: %v", ErrAppGroupNotFound, groupName, err)
+		return AppCredential{}, fmt.Errorf("%w: %s: %v", ErrSiteNotFound, groupName, err)
 	}
 
-	appID := group.Spec.AppCredentials.AppID
-	appSecret := group.Spec.AppCredentials.AppSecret
+	appID := site.Status.AppID
+	appSecret := site.Status.AppSecret
 	if appID == "" || appSecret == "" {
-		return AppCredential{}, fmt.Errorf("%w: appid or appsecret not found in appgroup %s", ErrAppCredentialNotFound, groupName)
+		return AppCredential{}, fmt.Errorf("%w: appId or appSecret not found in site %s status", ErrAppCredentialNotFound, groupName)
 	}
 
 	slog.Info("k8s resolve app credential succeeded",
@@ -209,6 +219,10 @@ func (s *K8sService) QueryReplicaSet(ctx context.Context, namespace, name string
 
 func (s *K8sService) QueryDeployment(ctx context.Context, namespace, name string) (k8sDeployment, error) {
 	return queryK8sObject[k8sDeployment](ctx, s, fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", url.PathEscape(resolveNamespace(namespace)), url.PathEscape(name)), name, "deployment", func(value k8sDeployment) string { return value.Metadata.Name })
+}
+
+func (s *K8sService) QuerySite(ctx context.Context, namespace, name string) (site, error) {
+	return queryK8sObject[site](ctx, s, fmt.Sprintf("/apis/w7panel.w7.com/v1alpha1/namespaces/%s/sites/%s", url.PathEscape(resolveNamespace(namespace)), url.PathEscape(name)), name, "site", func(value site) string { return value.Metadata.Name })
 }
 
 func queryK8sObject[T any](ctx context.Context, service *K8sService, path, expectedName, kind string, objectName func(T) string) (T, error) {

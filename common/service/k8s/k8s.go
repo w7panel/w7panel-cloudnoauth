@@ -163,7 +163,7 @@ func (s *K8sService) ResolveAppCredentialForPod(ctx context.Context, namespace, 
 	if err != nil {
 		return AppCredential{}, err
 	}
-	site, err := s.QuerySite(ctx, namespace, groupName)
+	site, err := s.QuerySite(ctx, groupName)
 	if err != nil {
 		return AppCredential{}, fmt.Errorf("%w: %s: %v", ErrSiteNotFound, groupName, err)
 	}
@@ -221,8 +221,8 @@ func (s *K8sService) QueryDeployment(ctx context.Context, namespace, name string
 	return queryK8sObject[k8sDeployment](ctx, s, fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", url.PathEscape(resolveNamespace(namespace)), url.PathEscape(name)), name, "deployment", func(value k8sDeployment) string { return value.Metadata.Name })
 }
 
-func (s *K8sService) QuerySite(ctx context.Context, namespace, name string) (siteInfo, error) {
-	return queryK8sObject[siteInfo](ctx, s, fmt.Sprintf("/apis/w7panel.w7.com/v1alpha1/namespaces/%s/sites/%s", url.PathEscape(resolveNamespace(namespace)), url.PathEscape(name)), name, "site", func(value siteInfo) string { return value.Metadata.Name })
+func (s *K8sService) QuerySite(ctx context.Context, name string) (siteInfo, error) {
+	return queryK8sObject[siteInfo](ctx, s, fmt.Sprintf("/apis/w7panel.w7.com/v1alpha1/sites/%s", url.PathEscape(name)), name, "site", func(value siteInfo) string { return value.Metadata.Name })
 }
 
 func queryK8sObject[T any](ctx context.Context, service *K8sService, path, expectedName, kind string, objectName func(T) string) (T, error) {

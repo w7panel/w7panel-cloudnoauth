@@ -119,16 +119,6 @@ metadata:
 spec:
   type: ExternalName
   externalName: {{ .Values.sidecar.targetHost | quote }}
-{{- if ne .Values.sidecar.serviceAccountName "default" }}
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ .Values.sidecar.serviceAccountName }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
-{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -142,9 +132,6 @@ rules:
   - apiGroups: ["apps"]
     resources: ["replicasets", "deployments"]
     verbs: ["get"]
-  - apiGroups: ["w7panel.w7.com"]
-    resources: ["sites"]
-    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -153,10 +140,37 @@ metadata:
   namespace: {{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.sidecar.serviceAccountName }}
+    name: {{ include "w7panel-cloudnoauth.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "w7panel-cloudnoauth.fullname" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "w7panel-cloudnoauth.clusterRBACName" . }}
+  labels:
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["w7panel.w7.com"]
+    resources: ["sites"]
+    resourceNames: [{{ .Release.Name | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "w7panel-cloudnoauth.clusterRBACName" . }}
+  labels:
+    {{- include "w7panel-cloudnoauth.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "w7panel-cloudnoauth.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "w7panel-cloudnoauth.clusterRBACName" . }}
 {{- end -}}

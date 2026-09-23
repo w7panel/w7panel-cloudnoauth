@@ -174,7 +174,10 @@ spec:
 
 Chart annotations 声明模板入口。可选的 `w7.cc/sidecar-resources-template` 可输出一次性的
 配套 Kubernetes 资源；本制品用它
-生成读取当前 Pod、ReplicaSet、Deployment 和 AppGroup 所需的 Role/RoleBinding，其他
+生成读取当前 Pod、ReplicaSet、Deployment 所需的 Role/RoleBinding，以及仅可读取当前
+Release 对应 Site 的 ClusterRole/ClusterRoleBinding。RBAC 优先绑定 ZPK 通过
+`.W7PanelArtifact.serviceAccountName` 注入的制品 Pod ServiceAccount；未注入时回退到
+`sidecar.serviceAccountName`（默认 `default`）。Sidecar 不单独创建或选择 ServiceAccount。其他
 sidecar 可用同一出口生成 PVC、Secret、ConfigMap、Service 等资源。
 `w7.cc/sidecar-host-aliases-template` 输出需要合并到目标 PodSpec 的 `hostAliases`；
 ZPK 注入器应保留业务已有条目，并按 IP 和 hostname 去重。

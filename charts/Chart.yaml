@@ -2,7 +2,7 @@ apiVersion: v2
 name: w7panel-cloudnoauth
 description: Transparent signing sidecar for requests to api.w7.cc.
 type: library
-version: 0.3.2
+version: 0.3.3
 appVersion: "v1.0.14"
 
 

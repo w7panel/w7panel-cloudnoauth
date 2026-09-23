@@ -39,9 +39,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "w7panel-cloudnoauth.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create -}}
-{{- default (include "w7panel-cloudnoauth.fullname" .) .Values.serviceAccount.name -}}
+{{- if and .W7PanelArtifact .W7PanelArtifact.serviceAccountName -}}
+{{- .W7PanelArtifact.serviceAccountName -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccount.name -}}
+{{- default "default" .Values.sidecar.serviceAccountName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Create a cluster-scoped RBAC name that remains unique when the same release
+name is installed in different namespaces.
+*/}}
+{{- define "w7panel-cloudnoauth.clusterRBACName" -}}
+{{- $name := printf "%s-%s-%s" .Release.Namespace .Release.Name "w7panel-cloudnoauth" -}}
+{{- if gt (len $name) 63 -}}
+{{- printf "%s-%s" ($name | trunc 52 | trimSuffix "-") ($name | sha256sum | trunc 10) -}}
+{{- else -}}
+{{- $name -}}
 {{- end -}}
 {{- end -}}
